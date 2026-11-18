@@ -21,3 +21,11 @@ node_modules/
 /build/
 /coverage/
 /.vercel/
+
+# Local project material stays on disk, outside the tracked repository.
+/demo/
+/docs/
+/skills/
+/AGENTS.md
+/GLOSSARY.md
+/ARCHITECTURE.md
