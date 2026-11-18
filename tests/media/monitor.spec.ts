@@ -112,6 +112,9 @@ async function enter(page: Page, actor: Invitation) {
   await page.goto("/probe/monitor");
   // Chromium's synthetic camera can end when capture starts in a background tab.
   await page.bringToFront();
+  await expect
+    .poll(() => page.evaluate(() => document.visibilityState))
+    .toBe("visible");
   await page.getByLabel("Invitation", { exact: true }).fill(actor.credential);
   await page
     .getByRole("combobox", { name: "Session", exact: true })
@@ -136,6 +139,20 @@ async function participant(page: Page, identity: string, camera = false) {
       })
     )
     .toContain("Media connected");
+  if (camera)
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          let bytes = 0;
+          for (const peer of window.monitorMedia.peers)
+            (await peer.getStats()).forEach((stat) => {
+              if (stat.type === "outbound-rtp" && stat.kind === "video")
+                bytes += stat.bytesSent;
+            });
+          return bytes;
+        })
+      )
+      .toBeGreaterThan(0);
 }
 const contexts: BrowserContext[] = [];
 const recordings: { page: Page; name: string }[] = [];
@@ -320,6 +337,7 @@ test("P1-02 monitor demo: notices, scoped tracks, switching, save and failed cle
     .getByRole("button", { name: "Simulate control failure" })
     .click();
   await expect(page.getByTestId("media-state")).toContainText("Media stopped");
+  await expect(one.getByTestId("notice")).toContainText("cleanup unconfirmed");
   await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
   await expect(page.getByTestId("connection-status")).toContainText(
     "cleanup unconfirmed"
@@ -327,6 +345,8 @@ test("P1-02 monitor demo: notices, scoped tracks, switching, save and failed cle
   const failed = await api(page, invite("facilitator"), "request", {
     target: "breakout-2",
     mode: "listen",
+    revision: (await (await api(page, invite("facilitator"), "read")).json())
+      .revision,
   });
   expect(failed.status()).toBe(503);
   await expect(one.getByTestId("notice")).toContainText("cleanup unconfirmed");
@@ -502,6 +522,97 @@ test("P1-02 AC1/AC2/AC3: late tracks, device loss, interrupted transfer and netw
   await flowing(page, "inbound-rtp");
   await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
   await locallyClosed(page);
+});
+
+test("P1-02 AC2: an old tab's disconnect cleanup cannot close a newer route", async ({
+  page,
+  browser,
+}) => {
+  const participantPage = await peerPage(browser);
+  const newer = await peerPage(browser);
+  await participant(participantPage, "breakout-1-1");
+  await enter(page, invite("facilitator"));
+  await page.getByRole("button", { name: "Listen", exact: true }).click();
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Listening:"
+  );
+  await flowing(page, "inbound-rtp");
+  const previous = await (
+    await api(page, invite("facilitator"), "read")
+  ).json();
+  await enter(newer, invite("facilitator"));
+  await newer.getByRole("button", { name: "Speak", exact: true }).click();
+  await expect(newer.getByTestId("connection-status")).toContainText(
+    "Speaking:"
+  );
+  await expect(page.getByTestId("media-state")).toContainText("Media stopped");
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Route changed"
+  );
+  await flowing(newer, "outbound-rtp");
+  expect(
+    (
+      await api(page, invite("facilitator"), "request", {
+        revision: previous.revision,
+        target: "main",
+        mode: "join",
+      })
+    ).status()
+  ).toBe(409);
+  await expect(newer.getByTestId("media-state")).toContainText(
+    "Media connected"
+  );
+  await newer.getByRole("button", { name: "Stop / Retry Stop" }).click();
+  await locallyClosed(newer);
+});
+
+test("P1-02 AC3: a delayed acknowledgement never marks newer edits saved", async ({
+  page,
+}) => {
+  await enter(page, invite("facilitator"));
+  let release!: () => void;
+  let fetched!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const saved = new Promise<void>((resolve) => {
+    fetched = resolve;
+  });
+  await page.route("**/api/probe/monitor", async (route) => {
+    if (route.request().postDataJSON()?.action !== "save")
+      return route.continue();
+    const response = await route.fetch();
+    fetched();
+    await held;
+    await route.fulfill({ response });
+  });
+  await page.getByLabel("Test output").fill("First synthetic draft");
+  await page.getByRole("button", { name: "Save test work" }).click();
+  await saved;
+  await expect(
+    page.getByRole("button", { name: "Save test work" })
+  ).toBeDisabled();
+  await expect(
+    page.getByText("Saving test work…", { exact: true })
+  ).toBeVisible();
+  await page.getByLabel("Test output").fill("Newer unsaved synthetic draft");
+  release();
+  await expect(
+    page.getByText("Unsaved changes (earlier edit saved)", { exact: true })
+  ).toBeVisible();
+  expect(
+    (await (await api(page, invite("facilitator"), "read")).json()).work.text
+  ).toBe("First synthetic draft");
+  await page.unroute("**/api/probe/monitor");
+  await page.getByRole("button", { name: "Save test work" }).click();
+  await expect(
+    page.getByText("Saved revision 2", { exact: true })
+  ).toBeVisible();
+  await page.reload();
+  await enter(page, invite("facilitator"));
+  await expect(page.getByLabel("Test output")).toHaveValue(
+    "Newer unsaved synthetic draft"
+  );
 });
 
 test("P1-02 AC2 local limitation: a cached publishing token can rejoin after removal", async ({

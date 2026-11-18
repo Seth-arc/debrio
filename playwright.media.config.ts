@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { resolve } from "node:path";
 
 export default defineConfig({
   testDir: "./tests/media",
@@ -13,7 +14,16 @@ export default defineConfig({
     browserName: "chromium",
     channel: "chromium",
     viewport: { width: 1280, height: 1100 },
-    launchOptions: { args: ["--use-fake-device-for-media-stream"] },
+    launchOptions: {
+      args: [
+        "--use-fake-device-for-media-stream",
+        ...(process.env.MEDIA_MONITOR_PROBE === "1"
+          ? [
+              `--use-file-for-fake-video-capture=${resolve(".artifacts/media-probe/camera.y4m")}`,
+            ]
+          : []),
+      ],
+    },
     permissions: ["microphone", "camera"],
     trace: "off",
     screenshot: "off",

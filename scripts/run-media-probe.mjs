@@ -99,6 +99,20 @@ try {
     { mode: 0o600 }
   );
   if (monitoring) {
+    // Deterministic synthetic camera; no physical device or downloaded media.
+    await writeFile(
+      `${directory}/camera.y4m`,
+      Buffer.concat([
+        Buffer.from("YUV4MPEG2 W320 H240 F10:1 Ip A1:1 C420\n"),
+        ...Array.from({ length: 10 }, (_, frame) =>
+          Buffer.concat([
+            Buffer.from("FRAME\n"),
+            Buffer.alloc(320 * 240, 40 + frame * 15),
+            Buffer.alloc((320 * 240) / 2, 128),
+          ])
+        ),
+      ])
+    );
     const actors = invitations.map((entry) => ({
       ...entry,
       role: "participant",
@@ -255,6 +269,7 @@ try {
   await rm(`${directory}/assignments.json`, { force: true });
   await rm(`${directory}/invitations.json`, { force: true });
   if (monitoring) {
+    await rm(`${directory}/camera.y4m`, { force: true });
     await rm(`${directory}/monitor-invitations.json`, { force: true });
     await rm(`${directory}/monitor-fixture.json`, { force: true });
   }

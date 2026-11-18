@@ -42,6 +42,7 @@ export type MonitorState = {
   events: Event[];
 };
 export type MonitorView = {
+  revision: number;
   identity: string;
   name: string;
   role: Actor["role"];
@@ -107,6 +108,8 @@ export class MonitorProbe {
   private async closeRoute() {
     const route = this.state.route;
     if (!route) return;
+    const retry = route.phase === "failed";
+    if (!retry) this.state.next++;
     route.phase = "closing";
     await this.event("closing");
     try {
@@ -127,6 +130,7 @@ export class MonitorProbe {
       )
         throw new Error("Closure unconfirmed");
       await this.event("closed");
+      if (retry) this.state.next++;
       this.state.route = null;
       await this.persist(this.state);
     } catch {
@@ -186,6 +190,7 @@ export class MonitorProbe {
         text: "",
       };
     const view = (): MonitorView => ({
+      revision: this.state.next,
       identity: actor.identity,
       name: actor.name,
       role: actor.role,
@@ -212,7 +217,16 @@ export class MonitorProbe {
       expiresAt: this.fixture.expiresAt,
     });
     if (request.action === "read") {
-      await this.syncSubscriptions();
+      try {
+        await this.syncSubscriptions();
+      } catch {
+        // Unknown provider state must attempt cleanup and retain a failed notice.
+        try {
+          await this.closeRoute();
+        } catch {
+          /* closeRoute persists failure. */
+        }
+      }
       return view();
     }
     if (request.action === "save") {
@@ -237,6 +251,13 @@ export class MonitorProbe {
       await this.event(
         request.enabled ? "control-unavailable" : "control-restored"
       );
+      if (request.enabled) {
+        try {
+          await this.closeRoute();
+        } catch {
+          /* Injected failure remains visible. */
+        }
+      }
       return view();
     }
     if (request.action === "revoke") {
@@ -249,12 +270,22 @@ export class MonitorProbe {
     if (request.action === "stop") {
       if (!facilitator && !operator)
         throw new ProbeError(403, "Facilitator permission required.");
+      if (request.revision !== this.state.next)
+        throw new ProbeError(
+          409,
+          "Route changed. Refresh status before retrying Stop."
+        );
       await this.closeRoute();
       return view();
     }
     if (request.action === "request") {
       if (!facilitator || this.state.revoked)
         throw new ProbeError(403, "Facilitator permission denied.");
+      if (request.revision !== this.state.next)
+        throw new ProbeError(
+          409,
+          "Route changed. Refresh status before retrying the transfer."
+        );
       if (!["listen", "speak", "join"].includes(String(request.mode)))
         throw new ProbeError(400, "Invalid mode.");
       const target = this.fixture.assignments.find(

@@ -38,10 +38,13 @@ export default function MonitoringProbe() {
   const [draft, setDraft] = useState("");
   const [workRevision, setWorkRevision] = useState(0);
   const [workStatus, setWorkStatus] = useState("No saved text loaded.");
+  const [workBusy, setWorkBusy] = useState(false);
+  const editGeneration = useRef(0);
   const [mediaCounts, setMediaCounts] = useState({ received: 0, sent: 0 });
   const auth = useRef<Record<string, string> | null>(null);
   const latest = useRef<MonitorView | null>(null);
   const active = useRef<Room | null>(null);
+  const activeRevision = useRef<number | undefined>(undefined);
   const tracks = useRef<LocalTrack[]>([]);
   const output = useRef<HTMLDivElement>(null);
   const generation = useRef(0);
@@ -54,6 +57,7 @@ export default function MonitoringProbe() {
   const scanRoom = useRef<string | null>(null);
 
   function update(value: MonitorView) {
+    if (latest.current && value.revision < latest.current.revision) return;
     latest.current = value;
     setView(value);
   }
@@ -76,6 +80,7 @@ export default function MonitoringProbe() {
   function localStop() {
     const room = active.current;
     active.current = null;
+    activeRevision.current = undefined;
     room?.removeAllListeners();
     tracks.current.forEach((track) => track.stop());
     tracks.current = [];
@@ -93,16 +98,24 @@ export default function MonitoringProbe() {
     clearTimeout(scanTimer.current);
   }
   async function stop(
-    reason = "Stopped. Rejoin explicitly to transmit again."
+    reason = "Stopped. Rejoin explicitly to transmit again.",
+    revision = activeRevision.current ?? latest.current?.revision
   ) {
     generation.current++;
     stopScan();
     localStop();
     setMessage(reason);
     if (latest.current?.role === "facilitator") {
+      setMessage(`${reason} Confirming route cleanup…`);
       try {
-        update(await call({ action: "stop" }));
+        update(await call({ action: "stop", revision }));
+        setMessage(reason);
       } catch (error) {
+        try {
+          update(await call({ action: "read" }));
+        } catch {
+          /* Keep the last known state. */
+        }
         setMessage(
           `Local media stopped. ${error instanceof Error ? error.message : "Cleanup unconfirmed."}`
         );
@@ -162,12 +175,20 @@ export default function MonitoringProbe() {
         if (Date.now() >= value.expiresAt) await stop("Synthetic run expired.");
       } catch {
         if (!disposed) {
+          const cleanupRevision = activeRevision.current;
           generation.current++;
           stopScan();
           localStop();
           setMessage(
             "Task connection unavailable. Local media stopped; saved work retained. Restore connection, then Retry Stop before rejoining."
           );
+          if (cleanupRevision !== undefined) {
+            try {
+              update(await call({ action: "stop", revision: cleanupRevision }));
+            } catch {
+              /* Cleanup remains unconfirmed until reconnect/retry. */
+            }
+          }
         }
       } finally {
         if (!disposed) timer = setTimeout(poll, 400);
@@ -189,12 +210,14 @@ export default function MonitoringProbe() {
   async function connect(
     grant: NonNullable<Reply["grant"]>,
     mode: Mode | "participant",
-    attempt: number
+    attempt: number,
+    revision?: number
   ) {
     const room = new Room({
       reconnectPolicy: { nextRetryDelayInMs: () => null },
     });
     active.current = room;
+    activeRevision.current = revision;
     room.on(RoomEvent.TrackSubscribed, (track) => {
       output.current?.append(track.attach());
     });
@@ -203,11 +226,14 @@ export default function MonitoringProbe() {
     );
     room.on(RoomEvent.Disconnected, () => {
       if (attempt === generation.current)
-        void stop("Media disconnected. Retry Stop and explicitly rejoin.");
+        void stop(
+          "Media disconnected. Retry Stop and explicitly rejoin.",
+          revision
+        );
     });
     room.on(RoomEvent.Reconnecting, () => {
       if (attempt === generation.current)
-        void stop("Connection interrupted. Rejoin explicitly.");
+        void stop("Connection interrupted. Rejoin explicitly.", revision);
     });
     await room.connect(grant.url, grant.token, {
       autoSubscribe: mode === "participant",
@@ -237,7 +263,8 @@ export default function MonitoringProbe() {
         track.once(TrackEvent.Ended, () => {
           if (attempt === generation.current)
             void stop(
-              `Device lost (${track.kind}). Check browser permissions/devices and explicitly rejoin.`
+              `Device lost (${track.kind}). Check browser permissions/devices and explicitly rejoin.`,
+              revision
             );
         });
         await room.localParticipant.publishTrack(track);
@@ -256,11 +283,18 @@ export default function MonitoringProbe() {
     running.current = true;
     setBusy(true);
     const attempt = ++generation.current;
-
+    const expectedRevision = latest.current?.revision;
+    let ownedRevision: number | undefined;
     localStop();
     try {
       setMessage(`Opening ${mode} in ${room}; waiting for named notice…`);
-      const prepared = await call({ action: "request", target: room, mode });
+      const prepared = await call({
+        action: "request",
+        target: room,
+        mode,
+        revision: expectedRevision,
+      });
+      ownedRevision = prepared.revision;
       update(prepared);
       let granted: Reply | undefined;
       for (
@@ -282,7 +316,7 @@ export default function MonitoringProbe() {
         throw new Error(
           "Room unavailable: participant notice not acknowledged."
         );
-      await connect(granted.grant, mode, attempt);
+      await connect(granted.grant, mode, attempt, prepared.revision);
       if (attempt !== generation.current) return;
       update(await call({ action: "connected", route: prepared.route?.id }));
       setMessage(
@@ -292,7 +326,8 @@ export default function MonitoringProbe() {
       localStop();
       setMessage(error instanceof Error ? error.message : "Transfer failed.");
       try {
-        update(await call({ action: "stop" }));
+        if (ownedRevision !== undefined)
+          update(await call({ action: "stop", revision: ownedRevision }));
       } catch {
         /* Keep server's failed closure and notice for Retry Stop. */
       }
@@ -300,7 +335,8 @@ export default function MonitoringProbe() {
       if (attempt !== generation.current) {
         localStop();
         try {
-          update(await call({ action: "stop" }));
+          if (ownedRevision !== undefined)
+            update(await call({ action: "stop", revision: ownedRevision }));
         } catch {}
       }
       running.current = false;
@@ -481,6 +517,7 @@ export default function MonitoringProbe() {
                   type="number"
                   min={1}
                   max={30}
+                  disabled={scanning}
                   value={dwell}
                   onChange={(event) =>
                     setDwell(
@@ -570,13 +607,18 @@ export default function MonitoringProbe() {
                 value={draft}
                 maxLength={2000}
                 onChange={(event) => {
+                  editGeneration.current++;
                   setDraft(event.target.value);
                   setWorkStatus("Unsaved changes");
                 }}
               />
             </label>
             <button
+              disabled={workBusy}
               onClick={async () => {
+                const submitted = editGeneration.current;
+                setWorkBusy(true);
+                setWorkStatus("Saving test work…");
                 try {
                   const value = await call({
                     action: "save",
@@ -584,25 +626,42 @@ export default function MonitoringProbe() {
                     revision: workRevision,
                   });
                   setWorkRevision(value.work.revision);
-                  setWorkStatus(`Saved revision ${value.work.revision}`);
+                  setWorkStatus(
+                    submitted === editGeneration.current
+                      ? `Saved revision ${value.work.revision}`
+                      : "Unsaved changes (earlier edit saved)"
+                  );
                 } catch (error) {
                   setWorkStatus(
                     `Unsaved: ${error instanceof Error ? error.message : "Save failed"}`
                   );
+                } finally {
+                  setWorkBusy(false);
                 }
               }}
             >
               Save test work
             </button>
             <button
+              disabled={workBusy}
               onClick={async () => {
+                const requested = editGeneration.current;
+                setWorkBusy(true);
                 try {
                   const value = await call({ action: "read" });
+                  if (requested !== editGeneration.current) {
+                    setWorkStatus(
+                      "Reload cancelled; newer local edit retained."
+                    );
+                    return;
+                  }
                   setDraft(value.work.text);
                   setWorkRevision(value.work.revision);
                   setWorkStatus(`Loaded revision ${value.work.revision}`);
                 } catch {
                   setWorkStatus("Could not reload; local edit retained.");
+                } finally {
+                  setWorkBusy(false);
                 }
               }}
             >

@@ -33,6 +33,7 @@ const request = (index: number, action: string, extra = {}) => ({
   session: actors.at(index)!.session,
   room: actors.at(index)!.room,
   action,
+  revision: 0,
   ...extra,
 });
 function setup() {
@@ -108,7 +109,11 @@ describe("P1-02 scoped route controller", () => {
     await controller.handle(request(4, "fault", { enabled: true }));
     await expect(
       controller.handle(
-        request(0, "request", { target: "breakout-2", mode: "speak" })
+        request(0, "request", {
+          target: "breakout-2",
+          mode: "speak",
+          revision: state.next,
+        })
       )
     ).rejects.toMatchObject({ status: 503 });
     expect(state.route).toMatchObject({
@@ -118,7 +123,11 @@ describe("P1-02 scoped route controller", () => {
     });
     await controller.handle(request(4, "fault", { enabled: false }));
     await controller.handle(
-      request(0, "request", { target: "breakout-2", mode: "speak" })
+      request(0, "request", {
+        target: "breakout-2",
+        mode: "speak",
+        revision: state.next,
+      })
     );
     expect(provider.removeParticipant).toHaveBeenCalledWith(
       "a-breakout-1",
@@ -150,13 +159,61 @@ describe("P1-02 scoped route controller", () => {
       controller.handle(request(0, "grant", { route: state.route!.id }))
     ).rejects.toMatchObject({ status: 403 });
     await controller.handle(request(4, "fault", { enabled: false }));
-    await controller.handle(request(0, "stop"));
+    await controller.handle(request(0, "stop", { revision: state.next }));
     expect(state.route).toBeNull();
     await expect(
       controller.handle(
         request(0, "request", { target: "breakout-1", mode: "join" })
       )
     ).rejects.toMatchObject({ status: 403 });
+  });
+  it("AC2 rejects reordered transfers and old compensating stops, including after closure", async () => {
+    const { controller, state } = setup();
+    await controller.handle(
+      request(0, "request", { target: "breakout-1", mode: "listen" })
+    );
+    const oldRevision = state.next;
+    await controller.handle(
+      request(0, "request", {
+        target: "breakout-2",
+        mode: "listen",
+        revision: oldRevision,
+      })
+    );
+    const current = state.route;
+    await expect(
+      controller.handle(request(0, "stop", { revision: oldRevision }))
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      controller.handle(
+        request(0, "request", {
+          target: "breakout-1",
+          mode: "speak",
+          revision: oldRevision,
+        })
+      )
+    ).rejects.toMatchObject({ status: 409 });
+    expect(state.route).toBe(current);
+    await controller.handle(request(0, "stop", { revision: state.next }));
+    await expect(
+      controller.handle(
+        request(0, "request", { target: "breakout-1", mode: "speak" })
+      )
+    ).rejects.toMatchObject({ status: 409 });
+    expect(state.route).toBeNull();
+  });
+  it("AC2 automatically marks control loss uncertain before any manual Stop", async () => {
+    const { controller, state, connect } = setup();
+    await controller.handle(
+      request(0, "request", { target: "breakout-1", mode: "listen" })
+    );
+    connect();
+    await controller.handle(request(4, "fault", { enabled: true }));
+    expect(state.route?.phase).toBe("failed");
+    expect(state.events.at(-1)?.kind).toBe("cleanup-failed");
+    expect((await controller.handle(request(1, "read"))).route?.phase).toBe(
+      "failed"
+    );
   });
   it("AC3 reloads acknowledged work from disk, rejects stale writes and isolates authors", async () => {
     const directory = await mkdtemp(join(tmpdir(), "debrio-monitor-"));
