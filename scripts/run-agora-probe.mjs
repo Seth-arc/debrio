@@ -7,6 +7,7 @@ import { parseEnv } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "@playwright/test";
 import { issueAgoraGrant } from "./agora-grant.mjs";
+import { classifyAgoraCutoff } from "./agora-cutoff.mjs";
 
 if (
   process.env.AGORA_PROBE_CONFIRMED !== "1" ||
@@ -125,10 +126,11 @@ const refresh = async (index) => {
   grants.splice(index, 1, grant);
 };
 const sample = async () => {
+  const startedAt = Date.now();
   const states = await Promise.all(
     pages.slice(0, 2).map((p) => p.evaluate(() => window.probe.sample()))
   );
-  const observation = { at: Date.now(), phase, states };
+  const observation = { startedAt, at: Date.now(), phase, states };
   report.samples.push(observation);
   return observation;
 };
@@ -296,7 +298,6 @@ try {
     await delay(250);
   }
   const deadline = lastAuthority + 15_000;
-  const beforeDeadline = report.samples.findLast((s) => s.at <= deadline);
   const beyond = report.samples.filter((s) => s.at >= deadline);
   assert(beyond.length >= 2, "Need observations past the D3 deadline");
   assert(
@@ -313,20 +314,14 @@ try {
     ),
     "Both synthetic sources must keep sending after expiry"
   );
-  report.checks.publishCutoff = beyond.every(
-    (s) => s.states[1].inbound === beforeDeadline.states[1].inbound
-  );
-  report.checks.receiveCutoff = beyond.every(
-    (s) => s.states[0].inbound === beforeDeadline.states[0].inbound
-  );
-  report.checks.expirySample =
-    report.checks.publishCutoff && report.checks.receiveCutoff
-      ? "Pass"
-      : "Fail";
+  const cutoff = classifyAgoraCutoff(report.samples, deadline);
+  report.checks.publishCutoff = cutoff.publish;
+  report.checks.receiveCutoff = cutoff.receive;
+  report.checks.expirySample = cutoff.verdict;
   if (report.checks.expirySample === "Fail") report.verdict = "Fail";
   assert(
-    report.checks.publishCutoff && report.checks.receiveCutoff,
-    "Media continued past the fifteen-second authorization bound"
+    cutoff.verdict === "Pass",
+    "Expiry observation failed or cannot resolve the fifteen-second boundary"
   );
   // A passing sample supports further qualification; it cannot certify all hostile clients.
   report.status =
