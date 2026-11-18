@@ -6,7 +6,7 @@ Update from observed task evidence. Track local acceptance, demo, review, push/C
 
 | Task | Outcome | State | Local / demo / review | Delivery | Record |
 |---|---|---|---|---|---|
-| P0-01 | Establish repository workflow and a safe baseline | Blocked: QG-02 protection authorization | AC1–AC3 pass; 3 tests pass; independent implementation review Approve; video N/A | [PR #1](https://github.com/Seth-arc/debrio/pull/1), implementation `b2f409f`; CI not configured; **not merged** | [P0-01](records/P0-01.md) |
+| P0-01 | Establish repository workflow and a safe baseline | Complete | AC1–AC3 pass; 3 tests pass; independent implementation review Approve; authorized review protection verified; video N/A | [PR #1](https://github.com/Seth-arc/debrio/pull/1), implementation `b2f409f`; application CI deferred to P0-03; **not merged** | [P0-01](records/P0-01.md) |
 | P0-02 | Select the stack and initial architecture | Not started | Not run | Not committed/pushed | Not created |
 | P0-03 | Make the application reproducibly build and check | Not started | Not run | Not committed/pushed | Not created |
 | P1-01 | Join an isolated multi-room media probe | Not started | Not run | Not committed/pushed | Not created |
