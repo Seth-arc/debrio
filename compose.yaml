@@ -1,0 +1,36 @@
+name: debrio-foundation
+services:
+  db:
+    image: public.ecr.aws/supabase/postgres:17.12.0.000@sha256:8630950b489ecc70563300180287a98c192a4a48f5ae00b4febdaeea1abe85de
+    environment:
+      POSTGRES_PASSWORD: local-disposable-only
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:54322:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - db-data:/var/lib/postgresql/data
+  tests:
+    image: public.ecr.aws/supabase/pg_prove:3.36@sha256:eda7c5e68719e9c8287e78c017118407b48df904a51c935f5ab6098b8c0bc6bc
+    profiles: [test]
+    environment:
+      PGPASSWORD: local-disposable-only
+    volumes:
+      - ./supabase/tests:/tests:ro
+    command:
+      [
+        "pg_prove",
+        "--host",
+        "db",
+        "--username",
+        "postgres",
+        "--dbname",
+        "postgres",
+        "/tests/foundation.test.sql",
+      ]
+volumes:
+  db-data:
