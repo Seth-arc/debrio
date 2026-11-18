@@ -1,6 +1,6 @@
 # Debrio
 
-Minimal Next.js application foundation. No account, workshop, media or hosted-provider integration is implemented yet.
+Minimal Next.js application foundation with an opt-in synthetic LiveKit media probe. Production accounts, workshops and media authorization are not implemented.
 
 ## Run locally
 
@@ -48,8 +48,29 @@ Open the same local URL and stop with Ctrl+C. Local hooks format staged files, t
 - Node.js: **24.x**; install: `npm ci --include=dev`; build: `npm run build`.
 - Output directory: leave the framework default override **off**. Do not set `out`.
 - Required environment variables for this foundation: **none**. Optional: `NEXT_TELEMETRY_DISABLED=1`.
-- Do not add Supabase/LiveKit secrets yet: no code consumes them. `NEXT_PUBLIC_*` values are browser-visible.
+- Keep the media probe disabled on Vercel; its routes return 404 there. `NEXT_PUBLIC_*` values are browser-visible and must never contain administrative secrets.
 
 These are configuration instructions, not a deployment receipt. Hosted providers, capacity, billing and media remain unverified.
 
 Dependency review uses an expiring exception only for withdrawn advisory [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf), still present in the npm feed on 18 November 2026. The maintainer must remove/review it by 18 December 2026. ESLint 9.39.5 is pinned because the current Next.js React/accessibility lint plugins do not yet accept ESLint 10; upgrade when their peer ranges support it. No vulnerable runtime package is exempted.
+
+## P1-01 synthetic media probe
+
+This is a local feasibility fixture, not production-ready conferencing. It uses official `livekit-client` 2.24.1 and `livekit-server-sdk` 2.20.0 (Apache-2.0), and a digest-pinned LiveKit server 1.13.11 (Apache-2.0). The accepted hosted candidate remains LiveKit Cloud; Cloud allowance, hosted behavior and two-physical-device audio proof are pending. No new infrastructure spending is authorized.
+
+After installing dependencies and Chromium as above:
+
+```sh
+npm run build
+npm run test:media
+# Or run the interactive synthetic probe:
+npm run probe:local
+```
+
+Only run one media probe at a time, including across checkouts. The runner starts a disposable SFU on loopback ports 7880/7881 and the app on port 3101, creates five rooms with two synthetic assignments each plus an isolated negative-test session, and ends after ten minutes or Ctrl+C. No Cloud endpoint or credentials are used. Open `http://127.0.0.1:3101/probe/media`; copy an invitation from ignored `.artifacts/media-probe/invitations.json` into its password field and select its exact session/room. Check devices, explicitly join, and leave to stop capture. Camera is optional. Permission denial has a retry path after changing browser device settings.
+
+The server checks invitation hashes and fixed assignments before issuing scoped microphone/camera tokens. Administrative credentials stay on the server. Invitations expire with the run. `test:media` uses independent Chromium contexts and synthetic browser media against the real local SFU, including cross-room/session and initial-expiry negatives. Those tests do not prove headset intelligibility, real-device echo, Bluetooth, relay networks, Cloud limits or active authorization revocation.
+
+**Blocking limitation:** [LiveKit token expiry](https://docs.livekit.io/frontends/reference/tokens-grants/) applies to initial joins; it does not terminate active media or subsequent reconnects. The suite explicitly demonstrates the active-expiry limitation. The accepted 15-second server-enforced authorization bound remains unproven. Passing this suite is not a completed P1-01/media gate or permission to deploy the probe.
+
+Normal cleanup deletes only this run's room names, verifies their absence, stops the local SFU, removes invitations and writes `.artifacts/media-probe/receipt.json`. If the runner is forcibly killed, stop its app process and run `docker compose -f compose.media-probe.yaml down`; confirm no task container remains before removing the stale `.artifacts/media-probe/run.lock` and invitation/assignment files. This fixture has no volumes or retained media. CI also stops the SFU in an unconditional cleanup step. Synthetic videos and private evidence remain local and ignored.

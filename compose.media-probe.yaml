@@ -1,0 +1,10 @@
+name: debrio-media-probe
+services:
+  media:
+    image: livekit/livekit-server:v1.13.11@sha256:25cd902de7cacbd5f1f779f6a6ac1eae20ba8f56b0935934ce6b0ab80d1e3d20
+    command: ["--config", "/etc/probe.yaml"]
+    volumes:
+      - ./tests/media/livekit.yaml:/etc/probe.yaml:ro
+    ports:
+      - "127.0.0.1:7880:7880"
+      - "127.0.0.1:7881:7881"

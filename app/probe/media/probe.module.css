@@ -1,0 +1,36 @@
+.probe {
+  margin-block: 2rem;
+}
+.probe h1 {
+  font-size: 2.4rem;
+}
+.probe label {
+  display: block;
+  margin-block: 1rem;
+}
+.probe input:not([type="checkbox"]),
+.probe select {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem;
+}
+.probe button {
+  margin: 0.4rem 0.6rem 0.4rem 0;
+  padding: 0.7rem;
+  cursor: pointer;
+}
+.probe button:disabled {
+  cursor: default;
+}
+.probe :focus-visible {
+  outline: 3px solid #28553e;
+  outline-offset: 3px;
+}
+.probe video {
+  width: 100%;
+  max-width: 20rem;
+}
+.probe fieldset {
+  min-width: 0;
+}
