@@ -1,0 +1,93 @@
+- generic [active] [ref=f5e1]:
+  - link "Skip to content" [ref=f5e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=f5e3]:
+    - main [ref=f5e4]:
+      - generic [ref=f5e5]:
+        - navigation "Main" [ref=f5e6]:
+          - link "debrio" [ref=f5e7] [cursor=pointer]:
+            - /url: "#top"
+          - generic [ref=f5e10]:
+            - link "How it works" [ref=f5e11] [cursor=pointer]:
+              - /url: "#how"
+            - link "Accessibility" [ref=f5e12] [cursor=pointer]:
+              - /url: "#accessibility"
+          - link "Explore demo" [ref=f5e13] [cursor=pointer]:
+            - /url: index.html#lobby
+        - generic [ref=f5e14]:
+          - generic [ref=f5e15]:
+            - heading "Every group, back in one room." [level=1] [ref=f5e16]
+            - paragraph [ref=f5e17]: Debrio brings your workshops together. Breakout rooms, timed activities, questions and evidence live in one session, so you can teach instead of juggling tools.
+            - generic [ref=f5e18]:
+              - link "Explore demo" [ref=f5e19] [cursor=pointer]:
+                - /url: index.html#lobby
+              - link "See how a session runs" [ref=f5e20] [cursor=pointer]:
+                - /url: "#how"
+          - button "Pause animation" [ref=f5e22] [cursor=pointer]
+      - region "The facilitator's console" [ref=f5e23]:
+        - 'img "Debrio workshop console: breakout groups, room controls, and the activity timer and agenda alongside." [ref=f5e24]'
+      - region "Build it once. Run it live. Keep what was learned." [ref=f5e25]:
+        - heading "Build it once. Run it live. Keep what was learned." [level=2] [ref=f5e26]
+        - list [ref=f5e27]:
+          - listitem [ref=f5e28]:
+            - generic [ref=f5e29]: "1"
+            - heading "Build" [level=3] [ref=f5e30]
+            - paragraph [ref=f5e31]: "Design the session as steps: the prompt, the timing, the output you expect and the materials each group receives."
+          - listitem [ref=f5e32]:
+            - generic [ref=f5e33]: "2"
+            - heading "Run" [level=3] [ref=f5e34]
+            - paragraph [ref=f5e35]: Let people in from the lobby, open breakouts, watch every room at once and move everyone to the next step together.
+          - listitem [ref=f5e36]:
+            - generic [ref=f5e37]: "3"
+            - heading "Review" [level=3] [ref=f5e38]
+            - paragraph [ref=f5e39]: Compare first and revised attempts, choose the evidence for your debrief and export a record of what each group produced.
+      - region "A facilitator's console, not a video call with extras." [ref=f5e40]:
+        - generic [ref=f5e41]:
+          - generic [ref=f5e42]:
+            - heading "A facilitator's console, not a video call with extras." [level=2] [ref=f5e43]
+            - generic [ref=f5e44]:
+              - generic [ref=f5e52]:
+                - heading "Every room at a glance" [level=3] [ref=f5e53]
+                - paragraph [ref=f5e54]: See who is in each breakout, how far they have got and who needs you. Listen, speak, message or join in one click.
+              - generic [ref=f5e59]:
+                - heading "Questions that don't get lost" [level=3] [ref=f5e60]
+                - paragraph [ref=f5e61]: Requests for information stay pinned above the chat until you acknowledge or answer them.
+              - generic [ref=f5e67]:
+                - heading "Steps that move the whole session" [level=3] [ref=f5e68]
+                - paragraph [ref=f5e69]: One timer, one prompt, one required output. Advance when you are ready; work in progress stays saved.
+              - generic [ref=f5e76]:
+                - heading "A lobby you control" [level=3] [ref=f5e77]
+                - paragraph [ref=f5e78]: Participants check their microphone and camera, then wait until you let them in.
+          - 'img "Debrio workshop messages: a help request and session messages beside the presentation and participant strip." [ref=f5e79]'
+      - region "Built for everyone in the room." [ref=f5e80]:
+        - generic [ref=f5e81]:
+          - generic [ref=f5e82]:
+            - heading "Built for everyone in the room." [level=2] [ref=f5e83]
+            - paragraph [ref=f5e84]: Explore keyboard controls, light and dark session themes, and reduced motion. Accessibility is part of the design; a full audit is still ahead.
+          - generic [ref=f5e85]:
+            - generic [ref=f5e86]:
+              - term [ref=f5e87]: visible focus and keyboard controls
+              - definition [ref=f5e88]: Keyboard
+            - generic [ref=f5e89]:
+              - term [ref=f5e90]: light and dark session views
+              - definition [ref=f5e91]: Themes
+            - generic [ref=f5e92]:
+              - term [ref=f5e93]: respects your reduced-motion preference
+              - definition [ref=f5e94]: Less motion
+      - region "Run your next session on Debrio." [ref=f5e95]:
+        - generic [ref=f5e96]:
+          - heading "Run your next session on Debrio." [level=2] [ref=f5e99]
+          - paragraph [ref=f5e100]: Explore a sample workshop. Try your camera, microphone and waiting-room music. This is a local demo with fictional participants.
+          - link "Explore demo" [ref=f5e101] [cursor=pointer]:
+            - /url: index.html#lobby
+    - contentinfo [ref=f5e102]:
+      - generic [ref=f5e103]:
+        - generic [ref=f5e104]: debrio
+        - generic [ref=f5e107]: © 2026 Debrio
+        - generic [ref=f5e108]:
+          - link "Accessibility" [ref=f5e109] [cursor=pointer]:
+            - /url: "#accessibility"
+          - link "About this demo" [ref=f5e110] [cursor=pointer]:
+            - /url: "#demo"
+          - link "Workspace" [ref=f5e111] [cursor=pointer]:
+            - /url: index.html#home

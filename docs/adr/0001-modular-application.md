@@ -1,0 +1,3 @@
+# One modular application with managed supporting services
+
+Accepted 17 November 2026. Debrio starts as one application with clear internal modules and one relational database, using managed media and narrowly scoped background jobs for work that cannot live within a request. This keeps pilot operations and delivery simpler than independently deployed workshop, billing and communication services while preserving their internal ownership boundaries. Vercel remains the selected hosting direction; specific application, database, media, caption and job providers remain conditional on budget, geography and feasibility evidence.

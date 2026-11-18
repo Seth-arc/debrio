@@ -1,0 +1,57 @@
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=e3]:
+    - complementary [ref=e4]:
+      - link "Debrio workshops" [ref=e5] [cursor=pointer]:
+        - /url: "#home"
+      - navigation "Main navigation" [ref=e9]:
+        - link "Build" [ref=e10] [cursor=pointer]:
+          - /url: "#build"
+        - link "Run" [ref=e14] [cursor=pointer]:
+          - /url: "#lobby"
+        - link "Review" [ref=e19] [cursor=pointer]:
+          - /url: "#review"
+      - generic [ref=e24]:
+        - button "Workspace settings" [ref=e25] [cursor=pointer]:
+          - generic [ref=e26]: RE
+        - button "Reset demo" [ref=e27] [cursor=pointer]
+    - generic [ref=e28]:
+      - banner [ref=e29]:
+        - generic [ref=e30]: Workshop
+        - generic [ref=e31]:
+          - button "Switch theme" [ref=e32] [cursor=pointer]
+          - group "Preview role" [ref=e36]:
+            - button "Facilitator" [pressed] [ref=e37] [cursor=pointer]
+            - button "Participant" [ref=e38] [cursor=pointer]
+      - main [ref=e39]:
+        - generic [ref=e40]:
+          - region "Your preview" [ref=e41]:
+            - generic [ref=e42]:
+              - generic [ref=e43]: RE
+              - generic [ref=e44]: You
+              - generic "Microphone off" [ref=e45]
+            - generic [ref=e48]:
+              - button "Unmute microphone" [ref=e49] [cursor=pointer]
+              - button "Turn camera on" [ref=e52] [cursor=pointer]
+          - generic [ref=e55]:
+            - heading "Conversations that move work forward" [level=1] [ref=e56]
+            - generic [ref=e57]:
+              - generic [ref=e58]:
+                - generic [aria-hidden] [ref=e59]: AO
+                - generic [aria-hidden] [ref=e60]: TB
+                - generic [aria-hidden] [ref=e61]: PR
+                - generic [aria-hidden] [ref=e62]: MS
+                - generic [aria-hidden] [ref=e63]: NB
+              - generic [ref=e64]: 0 waiting to join
+            - generic [ref=e65]:
+              - combobox "Microphone" [ref=e67]:
+                - option "System default" [selected]
+              - combobox "Camera" [ref=e69]:
+                - option "System default" [selected]
+              - generic [ref=e70]:
+                - combobox "Speaker" [ref=e71]:
+                  - option "System default" [selected]
+                - button "Test sound" [ref=e72] [cursor=pointer]
+            - button "Start session" [ref=e73] [cursor=pointer]
+  - status
