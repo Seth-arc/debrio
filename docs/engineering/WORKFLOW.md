@@ -86,6 +86,8 @@ Compare the exact remote SHA with local HEAD; log denied/network/non-fast-forwar
 
 Wait for required CI/checks and read their actual final status for the latest pushed commit. An independent agent's approval is not a GitHub approval. Leave the PR open unless the user explicitly authorized merging. A blocked branch rule remains a blocker; no admin bypass is implied.
 
+Solo-maintainer policy accepted 18 November 2026: another person's GitHub approval is not required. Keep the PR workflow and applicable independent agent reviews; set the required approving review count to zero while retaining other branch protections. Required automated checks apply once established by P0-03. The user's authorization to merge remains separate from review completion.
+
 ## Commit and evidence provenance
 
 A committed record cannot contain the hash of the commit that contains itself. Use one of these concrete patterns:

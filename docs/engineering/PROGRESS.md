@@ -6,7 +6,7 @@ Update from observed task evidence. Track local acceptance, demo, review, push/C
 
 | Task | Outcome | State | Local / demo / review | Delivery | Record |
 |---|---|---|---|---|---|
-| P0-01 | Establish repository workflow and a safe baseline | Not started | Not run | Not committed/pushed | Not created |
+| P0-01 | Establish repository workflow and a safe baseline | Complete | AC1–AC3 pass; 3 tests pass; independent implementation review Approve; authorized review protection verified; video N/A | [PR #1](https://github.com/Seth-arc/debrio/pull/1), implementation `b2f409f`; application CI deferred to P0-03; **not merged** | [P0-01](records/P0-01.md) |
 | P0-02 | Select the stack and initial architecture | Not started | Not run | Not committed/pushed | Not created |
 | P0-03 | Make the application reproducibly build and check | Not started | Not run | Not committed/pushed | Not created |
 | P1-01 | Join an isolated multi-room media probe | Not started | Not run | Not committed/pushed | Not created |
@@ -44,8 +44,9 @@ Update from observed task evidence. Track local acceptance, demo, review, push/C
 Q59-Q61 accepted: maximum three simultaneous live workshops per workspace; two-factor authentication for platform operator, owners and billing/data administrators; published support hours and named live pilot coverage. R1-R8 reliability proof is integrated into existing tasks. These are requirements, not passed tests; all task states remain unchanged.
 
 - Individual trainers/consultants are confirmed users: one-person workspace onboarding belongs to P2-01, complete solo delivery proof to P5-01, and individual billing to P6-03. One complete paid plan is accepted; numeric pricing/allowances and actual owner account/workspace identifiers remain setup inputs; exemption scope is the designated owner workspace; no implementation is claimed.
-- Tracker choice and agent instruction file: P0-01.
-- Remote history, authentication, default branch and first-commit path: P0-01; local main had no commits when this kit was prepared.
+- Tracker and agent file: GitHub Issues in Seth-arc/debrio and root AGENTS.md, selected and draft accepted during P0-01. No issue/labels created.
+- Solo-maintainer review policy: PRs and independent agent reviews retained; no additional person's approval required. Main's approving-review count is zero; other protections remain enabled. Merge still requires explicit user authorization.
+- P0-01 verified existing local/remote `main` at `2fceb2d8af0f284a5f8676ed5a3bb5aff5280126`; origin is now Seth-arc/debrio. Earlier unborn-HEAD/conductor notes describe the preparation snapshot. Branch controls and delivery evidence: [P0-01](records/P0-01.md).
 - Vercel and modular-application shape chosen; Render excluded. Initial stack accepted: Next.js/TypeScript, Supabase, Postmark and conditional LiveKit. Implementation architecture/account evidence: P0-02; media proof: Phase 1. No new infrastructure spending; complete setup with user-provided tester coupons; allowance verification pending. Domain debrio.app supplied; control/DNS unverified.
 - Stripe workspace subscriptions chosen; participants join free. P0-02 accepts billing architecture/pilot access; initial offer/coupon terms require acceptance after feasibility evidence; P6-03 now runs before P5-01 and tester readiness, retaining its ID.
 - Poll audience fixed at opening; repeats create fresh rounds preserving results. Opened questions/options frozen; removed votes retained subject to authorized deletion; 90-day retention and scoped exports accepted in P3-05. P5-01 includes integrated verification.
