@@ -1,0 +1,64 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    name: Application checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm install --global npm@11.19.1
+      - run: npm ci --include=dev
+      - run: npm run check
+      - run: npm run test:guards
+      - run: npm test
+      - run: npm run db:start
+      - run: npm run db:reset
+      - run: npm run test:db
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - if: always()
+        run: npm run db:stop
+  security:
+    name: Security checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+      - run: npm install --global npm@11.19.1
+      - run: npm ci --include=dev
+      - run: npm run security:dependencies
+      - name: Scan the tracked snapshot for secrets
+        run: |
+          mkdir "$RUNNER_TEMP/secret-scan"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/secret-scan"
+          docker run --rm -v "$RUNNER_TEMP/secret-scan:/scan:ro" zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f dir /scan --redact --no-banner
+      - name: Generate dependency and license inventory
+        run: npm sbom --include=dev --sbom-format=cyclonedx > /tmp/debrio-sbom.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dependency-inventory
+          path: /tmp/debrio-sbom.json
+          retention-days: 30

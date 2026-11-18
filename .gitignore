@@ -29,3 +29,9 @@ node_modules/
 /AGENTS.md
 /GLOSSARY.md
 /ARCHITECTURE.md
+
+# Generated tool state.
+*.tsbuildinfo
+next-env.d.ts
+/supabase/.temp/
+/supabase/.branches/
