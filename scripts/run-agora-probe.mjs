@@ -14,7 +14,7 @@ if (
   process.env.VERCEL
 )
   throw new Error(
-    "Hosted probe requires local operator confirmation of isolated project, unused allowance, no paid overages and recording/transcription/Media Push disabled."
+    "Hosted probe requires local operator confirmation of isolated project, remaining allowance, no paid overages and recording/transcription/Media Push disabled."
   );
 const envPath = process.argv[2];
 if (!envPath) throw new Error("Pass the ignored Agora environment-file path.");
@@ -59,7 +59,7 @@ const report = {
   sdk: "4.24.10",
   tokenSdk: "2.0.7",
   authorization:
-    "Owner confirmed isolated unused Free project, Co-host enabled and optional media services off.",
+    "Owner authorized continuation on isolated Free project with Co-host enabled and optional media services off; actual usage reconciliation remains pending.",
   maxClients: 2,
   maxWallSeconds: 600,
   media: "synthetic oscillator audio only; no physical microphone or camera",
@@ -67,9 +67,10 @@ const report = {
   checks: {},
   cleanup: {},
   status: "running",
+  verdict: "Unverified",
   limitations: [
     "Instrumented SDK is not an independently implemented hostile client.",
-    "WebSocket sends/closes and selected media teardown methods are blocked; not every possible SDK signalling path is intercepted.",
+    "Pinned SDK leave/reset/close and selected media teardown are blocked identically in both phases; WebSocket sends and renewal traffic remain allowed.",
     "No Cloud worst-case timing guarantee, real devices, captions or revocation API proof.",
   ],
 };
@@ -127,7 +128,7 @@ const sample = async () => {
   const states = await Promise.all(
     pages.slice(0, 2).map((p) => p.evaluate(() => window.probe.sample()))
   );
-  const observation = { at: Date.now(), states };
+  const observation = { at: Date.now(), phase, states };
   report.samples.push(observation);
   return observation;
 };
@@ -217,8 +218,22 @@ try {
     })
   );
   report.joinedAt = Date.now();
-  phase = "renew";
-  console.log("Agora probe: renewing permissions every five seconds.");
+  phase = "warmup";
+  const readyBy = Date.now() + 4000;
+  while (!(await sample()).states.every((s) => s.inbound > 0)) {
+    assert(
+      Date.now() < readyBy,
+      "Need bidirectional audio before instrumentation"
+    );
+    await delay(250);
+  }
+  await Promise.all([refresh(0), refresh(1)]);
+  await Promise.all(pages.map((p) => p.evaluate(() => window.probe.resist())));
+  phase = "control";
+  report.controlStartedAt = Date.now();
+  console.log(
+    "Agora probe: matched control, teardown resisted and renewal/signalling allowed."
+  );
   const renewUntil = Date.now() + 25_000;
   let nextRenew = Date.now() + 4000;
   while (Date.now() < renewUntil) {
@@ -229,31 +244,47 @@ try {
     await sample();
     await delay(250);
   }
-  const recent = report.samples.slice(-8);
+  const control = report.samples.filter((s) => s.phase === "control");
+  for (const current of control) {
+    const previous = control.findLast((s) => s.at <= current.at - 1000);
+    if (previous)
+      assert(
+        current.states.every(
+          (s, i) =>
+            s.inboundRows > 0 &&
+            s.inbound > previous.states.at(i).inbound &&
+            s.outbound > previous.states.at(i).outbound
+        ),
+        "Control audio must keep flowing in both directions across each sampled one-second window"
+      );
+  }
   assert(
-    recent[0].states.every(
-      (s, i) => recent.at(-1).states.at(i).inbound > s.inbound
-    ),
-    "Renewed clients must receive audio in both directions"
-  );
-  assert(
-    report.samples.every((s) =>
-      s.states.every((state) => state.state === "CONNECTED")
+    control.every((s) =>
+      s.states.every((state) => state.state === "CONNECTED" && state.guarded)
     ),
     "Renewal must not disconnect clients"
   );
-  report.checks.renewal =
-    "both directions receiving after 25 seconds of renewal with no SDK disconnect; not an audible continuity proof";
+  assert(
+    control.at(-1).at - control[0].at >= 24_000,
+    "Need sustained matched control"
+  );
+  assert(
+    control
+      .at(-1)
+      .states.every(
+        (s, i) => s.signallingSends > control[0].states.at(i).signallingSends
+      ),
+    "Signalling must remain active under instrumentation"
+  );
+  report.checks.matchedControl = "Pass";
   await refresh(0);
   await refresh(1);
   const lastAuthority = grants[0].authorizedAt;
   report.lastAuthorizedAt = lastAuthority;
   report.lastExpiry = grants[0].expiresAt;
-  await pages[0].evaluate(() => window.probe.resist(true));
-  await pages[1].evaluate(() => window.probe.resist());
   phase = "expiry";
   console.log(
-    "Agora probe: withholding client 101 renewal; resisting SDK teardown."
+    "Agora probe: withholding client 101 renewal with the same guards and signalling policy."
   );
   nextRenew = Date.now() + 5000;
   while (Date.now() < lastAuthority + 20_000) {
@@ -270,7 +301,9 @@ try {
   assert(beyond.length >= 2, "Need observations past the D3 deadline");
   assert(
     beyond.every((s) =>
-      s.states.every((state) => state.inboundRows > 0 && state.inbound > 0)
+      s.states.every(
+        (state) => state.inboundRows > 0 && state.inbound > 0 && state.guarded
+      )
     ),
     "Missing receive statistics are inconclusive, not a cutoff"
   );
@@ -286,16 +319,18 @@ try {
   report.checks.receiveCutoff = beyond.every(
     (s) => s.states[0].inbound === beforeDeadline.states[0].inbound
   );
-  report.clientEvidence = await Promise.all(
-    pages.map((p) => p.evaluate(() => window.probe.evidence()))
-  );
+  report.checks.expirySample =
+    report.checks.publishCutoff && report.checks.receiveCutoff
+      ? "Pass"
+      : "Fail";
+  if (report.checks.expirySample === "Fail") report.verdict = "Fail";
   assert(
     report.checks.publishCutoff && report.checks.receiveCutoff,
     "Media continued past the fifteen-second authorization bound"
   );
   // A passing sample supports further qualification; it cannot certify all hostile clients.
   report.status =
-    "sample-cutoff-observed; full D3 qualification remains unverified";
+    "matched-control-and-cutoff-observed; authoritative server/timing guarantee Unverified";
 } catch {
   report.status = "failed-or-inconclusive";
   report.failedPhase = phase;
@@ -307,6 +342,11 @@ try {
       ". See private receipt; no SDK errors/tokens printed."
   );
 } finally {
+  report.clientEvidence = await Promise.all(
+    pages.map((p) =>
+      p.evaluate(() => window.probe.evidence()).catch(() => null)
+    )
+  );
   phase = "cleanup";
   for (const page of pages) {
     await Promise.race([
