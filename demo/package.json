@@ -1,6 +1,0 @@
-{
-  "name": "debrio-demo",
-  "private": true,
-  "version": "1.0.0",
-  "scripts": { "start": "node server.cjs", "test": "node --test model.test.cjs" }
-}
