@@ -2,7 +2,7 @@
 
 Prepared 17 November 2026. This is the configuration companion to the [accepted stack](STACK-PROPOSAL.md), [promptbook](PROMPTBOOK.md), [billing contract](BILLING.md) and [communications contract](COMMUNICATIONS.md). The PRD remains the product source of truth.
 
-**Status:** requirements documented; hosted accounts, plans, projects, credentials, DNS and capacity are not verified or configured. Nothing here authorizes purchases, deployment, live charges or sending messages. No new infrastructure spending is permitted. Existing subscriptions/credits are usable only within verified available allowances and terms.
+**Status, updated P0-02 on 18 November 2026:** user confirms Supabase and LiveKit projects exist in dashboards only, control of debrio.app DNS, and no location/language/data-residency constraints. Account plans/allowances, project configuration, DNS records and capacity have not been independently inspected. No application has been scaffolded. Nothing here authorizes purchases, deployment, live charges or sending messages. No new infrastructure spending is permitted. Existing subscriptions/credits are usable only within verified available allowances and terms. See [architecture](../../ARCHITECTURE.md) and [P0-02 decision/evidence register](../tasks/P0-02/spec.md).
 
 Use `Unknown`, `Ready`, `Blocked` or `N/A with reason` in the readiness register. An unchecked box means proof is still required. Examples of URLs, resource names, environment variables and routes below are implementation conventions to adopt or reconcile during P0-02/P0-03, not existing endpoints or resources.
 
@@ -12,14 +12,14 @@ The platform owner supplies account access and business decisions through approp
 
 | Component | Record before setup | Task owner | Current status |
 |---|---|---|---|
-| GitHub | Repository owner, access, actual remote history/default branch, Actions/branch-rule availability | P0-01/P0-03 | Unknown; local remote previously pointed to `Seth-arc/conductor` |
+| GitHub | Repository owner, access, actual remote history/default branch, Actions/branch-rule availability | P0-01/P0-03 | Verified Seth-arc/debrio, main; P0-01 merged at b002e5a; application CI pending P0-03 |
 | Vercel | Account/team, plan, available allowance, commercial-use eligibility, project and region | P0-02/P0-03/P5-02 | Unknown |
-| Supabase | Organisation/project IDs, plan, regions, project slots, connection/storage/realtime quotas, recovery facilities | P0-02/P0-03/P5-02 | Unknown |
-| LiveKit Cloud | Project, plan, region/routing options, media/worker/transcription limits and current usage | P0-02/P1-01 through P1-06 | Unknown; suitability conditional |
+| Supabase | Organisation/project IDs, plan, regions, project slots, connection/storage/realtime quotas, recovery facilities | P0-02/P0-03/P5-02 | Dashboard project exists, user-confirmed; IDs/plan/settings unverified |
+| LiveKit Cloud | Project, plan, region/routing options, media/worker/transcription limits and current usage | P0-02/P1-01 through P1-06 | Dashboard project exists, user-confirmed; IDs/plan/settings unverified; suitability conditional |
 | Speech-to-text | Model/provider, access method, concurrency, processing/retention terms, available allowance | P1-05/P1-06 | Not selected |
 | Postmark | Account/server/stream, sending eligibility, monthly allowance, verified sender/domain | P0-02/P2-01/P4-06 | Provider selected; account unknown |
 | Stripe | Account country/selling entity, sandbox, live activation status, billing contact | P0-02/P6-03 | Unknown |
-| Domain/DNS | Registrar, authoritative DNS provider, edit access, existing application/mail records | P0-02/P5-02 | `debrio.app` supplied; control unverified |
+| Domain/DNS | Registrar, authoritative DNS provider, edit access, existing application/mail records | P0-02/P5-02 | User confirms control of `debrio.app`; records/provider/settings not inspected |
 | Operations | Support owner/backup contact, published hours/timezone, incident destination, private evidence/backup locations | P5-02/P5-03/P7-02 | Unknown |
 
 For each provider, record allowance reset/credit expiry, automatic billing behavior, available limits and what happens when capacity is exhausted. Budget alerts alone are not proof that charges cannot occur.
@@ -68,6 +68,45 @@ The normal local Supabase stack uses a container runtime; install/pin the CLI us
 Proof: a representative bad change fails CI, the corrected change passes on the exact commit, protected secrets are absent from logs, and task/release identity is traceable. [GitHub workflow security](https://docs.github.com/en/actions/reference/security/secure-use).
 
 ## 5. Vercel application hosting
+
+### Build and environment handoff requested during P0-02
+
+The current repository cannot build the Next.js product: its only package manifest is `demo/package.json`, containing `start` and `test`, with no Next.js dependency or build script. The user confirmed Supabase/LiveKit setup is dashboard-only. Connecting those projects to the repository does not create application code. Do not deploy the historical demo as the completed product. P0-03 must first scaffold and prove the build. No Vercel setting below is a claim that a command exists today.
+
+For the proposed root-level Next.js application after P0-03:
+
+| Vercel field | Setting |
+|---|---|
+| Framework Preset | **Next.js** |
+| Root Directory | Repository root (`.`); only change if P0-03 deliberately locates the app elsewhere |
+| Build Command | Keep framework default; P0-03 should supply the actual `build` script using `next build`, and verify the command in COMMANDS.md |
+| Output Directory | **Leave override off**; Next.js normally builds `.next`. Do not set `out` for this server-backed app |
+| Install Command | Keep detected package-manager default until P0-03 pins its lockfile; if npm is selected, verify `npm ci` there before using an override |
+| Node.js Version | Match P0-03's tested package/runtime version; local Node version alone is not deployment proof |
+| Development Command | Framework default after the app exists; not the demo's `node server.cjs` |
+| Production branch | `main` once the app is merged and deployment is separately authorized; a task PR is not merge/deploy authority |
+
+Current official references: [Next.js integration](https://vercel.com/docs/frameworks/full-stack/nextjs), [build configuration](https://vercel.com/docs/builds/configure-a-build), [environment settings](https://vercel.com/docs/environment-variables). Checked 18 November 2026. Prefer framework detection over a speculative `vercel.json`.
+
+Set **only variables consumed by implemented code**, separately for Development/Preview/Production. Below are proposed names, matching section 12; P0-03 and feature tasks must align the actual code and `.env.example`. Copy values from the intended provider project into Vercel's secret UI, not this public repository or chat.
+
+| Variable | Value source / intended use | Exposure |
+|---|---|---|
+| `APP_ORIGIN` | Actual HTTPS deployment origin; use `https://debrio.app` only after domain setup, and a separate preview/staging origin | Server config |
+| `NEXT_PUBLIC_SUPABASE_URL` | Intended Supabase project's API URL | Browser-safe |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase publishable API key; requires row policies | Browser-safe; never substitute a secret/service key |
+| `SUPABASE_SECRET_KEY` | Supabase elevated key, only for implemented narrow privileged operations | Server secret |
+| `DATABASE_URL` | Chosen pooled runtime connection, only if code uses direct SQL | Server secret |
+| `LIVEKIT_URL` | Intended LiveKit project's WebSocket endpoint | Non-secret server config, supplied to authorized client when needed |
+| `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Matching project's signing credentials | Server only; never `NEXT_PUBLIC_*` |
+| `POSTMARK_SERVER_TOKEN` | Intended application transactional server token | Server secret, when mail is implemented |
+| `POSTMARK_MESSAGE_STREAM`, `MAIL_FROM`, `MAIL_REPLY_TO` | Verified stream/sender and monitored inbox | Server config, not yet verified |
+| `POSTMARK_WEBHOOK_USERNAME`, `POSTMARK_WEBHOOK_PASSWORD` | Configured callback authentication | Server secrets, when callback exists |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Sandbox API key and that endpoint's signing secret | Server secrets; production values remain separately gated |
+| `STRIPE_MONTHLY_PRICE_ID` | Server-allowlisted sandbox recurring Price after commercial acceptance | Server config; not invented for scaffolding |
+| `JOB_DISPATCH_SECRET` | Dedicated authenticated scheduler secret shared with approved dispatch configuration | Server secret if D2 is accepted/implemented |
+
+Keep `MIGRATION_DATABASE_URL` in the restricted migration/CI path rather than routine app requests. Postmark SMTP credentials belong in **Supabase Auth SMTP settings**, not public Vercel variables. Caption/STT secrets belong in the selected worker runtime. Owner account/workspace identifiers belong in protected server/database configuration only after identity verification. Do not invent secrets or use placeholders in a live deployment. Redeploy an authorized environment after changing its variables; verify Auth redirect allowlists, webhook origins and environment isolation together. Setting variables does not establish working integrations.
 
 | Setting | Required configuration |
 |---|---|
@@ -198,7 +237,7 @@ Routes to implement and record, with exact paths settled in code: Auth callback/
 
 ## 11. Durable jobs and operating settings
 
-The exact managed scheduler/runner is **TBD in P0-02**. Prefer a supported path within existing accounts/allowances; do not provision a new service merely because a job is needed.
+P0-02's D2 is accepted by the user: Supabase Cron/pg_net dispatch to a bounded Vercel handler; see [D2 and its limits](../../ARCHITECTURE.md#commands-acknowledgement-and-durable-reconciliation). Extension/runtime configuration and actual allowance remain unverified. No runner has been provisioned.
 
 | Setting | Required value or behavior |
 |---|---|
@@ -251,8 +290,8 @@ For each item record: responsible person, environment, non-secret resource ID, s
 
 | Gate | Required evidence | Status |
 |---|---|---|
-| P0-01 baseline | Intended remote/history, reviewed baseline, ignore rules, skill paths and Git convention | Unknown |
-| P0-02 architecture/accounts | Actual account plans/allowances, regions, environment isolation, runner/caption design and settings ownership | Unknown |
+| P0-01 baseline | Intended remote/history, reviewed baseline, ignore rules, skill paths and Git convention | Ready for P0-01 scope; PR #1 merged; application CI still P0-03 |
+| P0-02 architecture/accounts | Actual account plans/allowances, regions, environment isolation, runner/caption design and settings ownership | D1–D6 design accepted; dashboard projects/DNS control confirmed by user; configuration/allowances unverified |
 | P0-03 local/CI foundation | Repeatable setup/build/tests, titled migrations, safe variables, isolated database and CI proof | Unknown |
 | P1-06 media feasibility | Real multi-device media/caption/isolation/recording-disabled evidence and measured allowance fit | Unknown |
 | P2-01/P4-06 identity/mail | Privileged MFA/recovery, private guest identity, authorized Postmark SMTP/API/callback delivery | Unknown |
