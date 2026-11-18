@@ -41,4 +41,6 @@ test("health is uncached, discloses no configuration and rejects writes", async 
   expect(response.headers()["x-frame-options"]).toBe("DENY");
   expect((await request.post("/api/health")).status()).toBe(405);
   expect((await request.get("/missing-page")).status()).toBe(404);
+  expect((await request.get("/probe/media")).status()).toBe(404);
+  expect((await request.post("/api/probe/grant")).status()).toBe(404);
 });
