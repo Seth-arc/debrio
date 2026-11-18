@@ -1,4 +1,6 @@
-﻿import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { once } from "node:events";
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import {
@@ -288,6 +290,118 @@ test("P1-01-AC2 limitation: active media survives initial-token expiry (D3 remai
   expect(afterExpiry.before).toBeGreaterThan(0);
   expect(afterExpiry.after).toBeGreaterThan(afterExpiry.before);
   await page.evaluate(() => window.probeRoom.disconnect());
+});
+
+test("P1-01-AC2 D3 investigation: a blocked management API does not stop receiving media", async ({
+  page,
+  browser,
+}) => {
+  let blockedRequests = 0;
+  const context = await browser.newContext();
+  const unavailable = createServer((request, response) => {
+    request.resume();
+    blockedRequests++;
+    response.writeHead(503, { "Content-Type": "application/json" });
+    response.end(
+      JSON.stringify({
+        code: "unavailable",
+        msg: "Synthetic management outage",
+      })
+    );
+  });
+  try {
+    unavailable.listen(0, "127.0.0.1");
+    await once(unavailable, "listening");
+    const address = unavailable.address();
+    if (!address || typeof address === "string")
+      throw new Error("Missing local fault endpoint");
+    const blockedControl = new RoomServiceClient(
+      `http://127.0.0.1:${address.port}`,
+      key,
+      secret,
+      { requestTimeout: 1, failover: false }
+    );
+    const receiver = await context.newPage();
+    await harness(page);
+    await harness(receiver);
+    await connect(page, await grant(page, invitations[0]));
+    await connect(receiver, await grant(receiver, invitations[1]), false);
+    const receivedBytes = () =>
+      receiver.evaluate(async () => {
+        const manager = window.probeRoom.engine.pcManager;
+        const reports = await Promise.all([
+          manager?.publisher.getStats(),
+          manager?.subscriber?.getStats(),
+        ]);
+        return reports
+          .flatMap((report) => (report ? [...report.values()] : []))
+          .filter((row) => row.type === "inbound-rtp" && row.kind === "audio")
+          .reduce((sum, row) => sum + row.bytesReceived, 0);
+      });
+    await expect.poll(receivedBytes).toBeGreaterThan(0);
+    const outageStarted = performance.now();
+    await expect(
+      blockedControl.removeParticipant(
+        invitations[0].providerRoom,
+        invitations[0].identity
+      )
+    ).rejects.toThrow();
+    expect(blockedRequests).toBeGreaterThan(0);
+    // The SDK harness deliberately ignores app-side timers, like an untrusted client.
+    await page.waitForTimeout(
+      Math.max(0, 17_000 - (performance.now() - outageStarted))
+    );
+    const before = await receivedBytes();
+    await page.waitForTimeout(1000);
+    const after = await receivedBytes();
+    expect(after).toBeGreaterThan(before);
+    const continuedForMs = performance.now() - outageStarted;
+    const removeStarted = performance.now();
+    await provider.removeParticipant(
+      invitations[0].providerRoom,
+      invitations[0].identity
+    );
+    const removeAcknowledgedMs = performance.now() - removeStarted;
+    await expect
+      .poll(() => page.evaluate(() => window.probeRoom.state))
+      .toBe("disconnected");
+    await expect
+      .poll(() =>
+        receiver.evaluate(() => window.probeRoom.remoteParticipants.size)
+      )
+      .toBe(0);
+    await page.waitForTimeout(1000);
+    const stoppedBytes = await receivedBytes();
+    await page.waitForTimeout(1000);
+    expect(await receivedBytes()).toBe(stoppedBytes);
+    const evidence = {
+      server: "LiveKit 1.13.11 local fixture",
+      browser: browser.version(),
+      blockedRequests,
+      continuedForMs,
+      inboundBytesAfter17Seconds: before,
+      inboundBytesAfter18Seconds: after,
+      removeAcknowledgedMs,
+      receiverQuietObservedWithinMs: performance.now() - removeStarted,
+      result:
+        "Management failure leaves media flowing beyond D3; successful removal stops this local sample. No Cloud or worst-case timing guarantee.",
+    };
+    await writeFile(
+      ".artifacts/media-probe/d3-investigation.json",
+      JSON.stringify(evidence, null, 2)
+    );
+    console.log("D3 investigation:", JSON.stringify(evidence));
+    await receiver.evaluate(() => window.probeRoom.disconnect());
+  } finally {
+    unavailable.closeAllConnections();
+    await Promise.all([
+      context.close(),
+      new Promise<void>((resolve, reject) => {
+        if (!unavailable.listening) return resolve();
+        unavailable.close((error) => (error ? reject(error) : resolve()));
+      }),
+    ]);
+  }
 });
 
 test("P1-01-AC1: denied devices recover, camera is optional, explicit leave stops capture", async ({
