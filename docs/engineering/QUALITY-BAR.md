@@ -19,6 +19,7 @@ The [PRD](../Debrio_PRD_v0.5.md) remains the product source of truth. This contr
 
 ## Applying the gates
 
+- Solo-maintainer policy, accepted 18 November 2026: require pull requests, applicable independent agent review and automated checks as they are established; do not require approval from another person. GitHub's required approving review count is zero. Preserve admin enforcement, resolved conversations and protection against force pushes/deletion. This does not grant agents merge authority or replace a separately scoped professional assessment.
 - Every task records applicable QG IDs, Pass / Fail / Unverified results, exact source revision, evidence location and remaining gaps. N/A requires a reason. Foundation tasks establish controls; feature tasks extend them without deferring correctness, security or maintainability to release.
 - P0-03 adds real automated commands to COMMANDS.md. CI must reject failed required checks; a local hook is not enforcement. Unavailable branch protection or scanning capabilities remain an explicit gap until an effective control is verified.
 - P7-02 assembles one evidence index in its existing task/release record. Evidence must apply to the candidate revision and service configuration; rerun affected checks after fixes. An independent code review is required, with reviewer, scope and limitations recorded. An AI review is not an independent professional security assessment or buyer sign-off.
