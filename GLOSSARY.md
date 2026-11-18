@@ -32,6 +32,14 @@ _Avoid_: Live session state, publication approval
 One delivery of a workshop definition with its own participants, progress and work in a hosting workspace; consultant-delivered client sessions normally belong to the consultant's workspace.
 _Avoid_: Workshop definition, template
 
+**Activity**:
+A configured part of a workshop agenda with an objective, instructions, tools and expected work; its session delivery can contain sequential steps or rounds.
+_Avoid_: Media room, entire session, automatic timer action
+
+**Role**:
+An explicitly assigned responsibility with scoped capabilities, such as facilitator, practitioner, observer or recorder, within its workspace, session, activity or round. A role in one scope grants no authority in another scope.
+_Avoid_: Universal administrator, billing entitlement, room membership
+
 **Group**:
 A set of participants assigned to work together for an activity or round; a jigsaw may preserve both home-group and expert-group assignments.
 _Avoid_: Media room
@@ -65,5 +73,5 @@ A poll whose results expose no named responses to users or exports; internal par
 _Avoid_: Untraceable anonymous poll
 
 **Publication approval**:
-An author's permission to share an identifiable individual item at a specific version with a specified audience.
+Permission from a required approver to share the exact item/version with a specified audience; identifiable individual work needs its author, expanded identifiable feedback also needs its subject, and external group publication needs every snapshotted contributor. Changed content or audience needs fresh approval, and withdrawal stops expanded access.
 _Avoid_: Blanket consent, session membership
