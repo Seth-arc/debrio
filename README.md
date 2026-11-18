@@ -11,7 +11,7 @@ npm ci --include=dev
 npm run dev
 ```
 
-Open http://127.0.0.1:3000. Stop with Ctrl+C. `.env.example` lists optional non-secret configuration; copying it to `.env.local` is optional. `GET /api/health` returns `{"status":"ok"}` with `Cache-Control: no-store`. This is application liveness, not database/provider readiness. Other HTTP write methods return 405.
+Open http://127.0.0.1:3000. Stop with Ctrl+C. Leave `NODE_ENV` unset so Next.js selects development/production for each command (PowerShell: `Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue`). `.env.example` lists optional non-secret configuration; copying it to `.env.local` is optional. `GET /api/health` returns `{"status":"ok"}` with `Cache-Control: no-store`. This is application liveness, not database/provider readiness. Other HTTP write methods return 405.
 
 ## Verify
 
