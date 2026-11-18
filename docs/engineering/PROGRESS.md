@@ -7,7 +7,7 @@ Update from observed task evidence. Track local acceptance, demo, review, push/C
 | Task | Outcome | State | Local / demo / review | Delivery | Record |
 |---|---|---|---|---|---|
 | P0-01 | Establish repository workflow and a safe baseline | Complete | AC1–AC3 pass; 3 tests pass; independent implementation review Approve; authorized review protection verified; video N/A | [PR #1](https://github.com/Seth-arc/debrio/pull/1), **merged** at `b002e5a` (verified 18 November); application CI deferred to P0-03 | [P0-01](records/P0-01.md) |
-| P0-02 | Select the stack and initial architecture | Blocked — proposal prepared; acceptance/account evidence pending | AC1–AC2 design pass; AC3 unverified; links/diagram/baseline checks pass; architecture review Approve after restore fix; video N/A | PR delivery in progress; **not merged** | [P0-02](records/P0-02.md) |
+| P0-02 | Select the stack and initial architecture | Blocked — proposal delivered; acceptance/account evidence pending | AC1–AC2 design pass; AC3 unverified; links/diagram/3 baseline tests pass; architecture and post-PR Approve, Standards/Spec zero findings; video N/A | [PR #2](https://github.com/Seth-arc/debrio/pull/2), proposal `6025a21`; no application CI; **not merged** | [P0-02](records/P0-02.md) |
 | P0-03 | Make the application reproducibly build and check | Not started | Not run | Not committed/pushed | Not created |
 | P1-01 | Join an isolated multi-room media probe | Not started | Not run | Not committed/pushed | Not created |
 | P1-02 | Prove visible listening and safe room switching | Not started | Not run | Not committed/pushed | Not created |
