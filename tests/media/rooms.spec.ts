@@ -30,6 +30,24 @@ const key = "probe-local";
 const secret = "synthetic-local-fixture-not-a-cloud-key";
 const provider = new RoomServiceClient(url, key, secret);
 
+test.afterEach(async ({ page }) => {
+  await page.close();
+  await expect
+    .poll(
+      async () => {
+        const rooms = [
+          ...new Set(invitations.map((entry) => entry.providerRoom)),
+        ];
+        const participants = await Promise.all(
+          rooms.map((room) => provider.listParticipants(room))
+        );
+        return participants.flat().length;
+      },
+      { timeout: 10_000 }
+    )
+    .toBe(0);
+});
+
 async function grant(page: Page, invitation: Invitation) {
   const response = await page.request.post("/api/probe/grant", {
     headers: { origin: "http://127.0.0.1:3101" },
@@ -319,12 +337,16 @@ test("P1-01-AC1: denied devices recover, camera is optional, explicit leave stop
     await expect(page.getByRole("status")).toContainText("Left media");
     if (process.env.PROBE_RECORD === "1") await page.waitForTimeout(1500);
     await expect
-      .poll(async () =>
-        (await provider.listParticipants(invitations[0].providerRoom)).map(
-          (participant) => participant.identity
-        )
-      )
-      .toEqual(["main-2"]);
+      .poll(async () => ({
+        participants: (
+          await provider.listParticipants(invitations[0].providerRoom)
+        ).map((participant) => participant.identity),
+        peerState: await second.getByRole("status").textContent(),
+      }))
+      .toEqual({
+        participants: ["main-2"],
+        peerState: "Connected to main as main-2",
+      });
     await second.getByRole("button", { name: "Leave / stop devices" }).click();
     expect(
       await second
