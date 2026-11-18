@@ -43,4 +43,6 @@ test("health is uncached, discloses no configuration and rejects writes", async 
   expect((await request.get("/missing-page")).status()).toBe(404);
   expect((await request.get("/probe/media")).status()).toBe(404);
   expect((await request.post("/api/probe/grant")).status()).toBe(404);
+  expect((await request.get("/probe/monitor")).status()).toBe(404);
+  expect((await request.post("/api/probe/monitor")).status()).toBe(404);
 });

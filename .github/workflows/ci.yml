@@ -35,6 +35,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
       - run: npm run test:media
+      - run: npm run test:monitor
       - if: always()
         run: npm run db:stop
       - if: always()

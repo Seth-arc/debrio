@@ -6,6 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { RoomServiceClient } from "livekit-server-sdk";
 
 const directory = ".artifacts/media-probe";
+const monitoring = process.argv.includes("--monitor");
 const existing = spawnSync(
   "docker",
   ["compose", "-f", "compose.media-probe.yaml", "ps", "--all", "--quiet"],
@@ -50,6 +51,7 @@ const env = {
   NODE_TLS_REJECT_UNAUTHORIZED: "1",
   NODE_ENV: "production",
   MEDIA_PROBE_ENABLED: "1",
+  MEDIA_MONITOR_PROBE: monitoring ? "1" : "0",
   MEDIA_PROBE_ORIGIN: "http://127.0.0.1:3101",
   LIVEKIT_URL: "ws://127.0.0.1:7880",
   LIVEKIT_API_KEY: "probe-local",
@@ -96,6 +98,52 @@ try {
     }),
     { mode: 0o600 }
   );
+  if (monitoring) {
+    const actors = invitations.map((entry) => ({
+      ...entry,
+      role: "participant",
+      name: `Test ${entry.identity}`,
+    }));
+    for (const role of ["facilitator", "operator"])
+      actors.push({
+        session: "a",
+        room: "main",
+        identity: role,
+        providerRoom: `${runId}-a-main`,
+        credential: randomBytes(32).toString("hex"),
+        role,
+        name: role === "facilitator" ? "Facilitator Ada" : "Test operator",
+      });
+    await writeFile(
+      `${directory}/monitor-invitations.json`,
+      JSON.stringify(actors),
+      { mode: 0o600 }
+    );
+    await writeFile(
+      `${directory}/monitor-fixture.json`,
+      JSON.stringify({
+        expiresAt,
+        assignments: actors.map(({ credential, ...entry }) => ({
+          ...entry,
+          hash: createHash("sha256").update(credential).digest("hex"),
+        })),
+      }),
+      { mode: 0o600 }
+    );
+    await writeFile(
+      `${directory}/monitor-state.json`,
+      JSON.stringify({
+        next: 0,
+        assignedRoom: "main",
+        revoked: false,
+        controlFailure: false,
+        route: null,
+        work: [],
+        events: [],
+      }),
+      { mode: 0o600 }
+    );
+  }
   compose("up", "-d", "media");
   let available = false;
   for (let attempt = 0; attempt < 30 && !interrupted; attempt++) {
@@ -113,7 +161,7 @@ try {
     if (interrupted) throw new Error("Probe interrupted before launch");
     await client.createRoom({
       name,
-      maxParticipants: 2,
+      maxParticipants: monitoring ? 3 : 2,
       emptyTimeout: 600,
       departureTimeout: 600,
     });
@@ -124,11 +172,11 @@ try {
     `Synthetic local run ${runId}; expires ${new Date(expiresAt).toISOString()}. Cloud usage: zero.`
   );
   console.log(
-    "Private invitations: .artifacts/media-probe/invitations.json (do not publish)."
+    `Private invitations: ${directory}/${monitoring ? "monitor-invitations" : "invitations"}.json (do not publish).`
   );
   if (!testing)
     console.log(
-      "Open http://127.0.0.1:3101/probe/media; Ctrl+C ends this run and removes its rooms."
+      `Open http://127.0.0.1:3101/probe/${monitoring ? "monitor" : "media"}; Ctrl+C ends this run and removes its rooms.`
     );
   child = spawn(
     process.execPath,
@@ -137,8 +185,9 @@ try {
           "node_modules/@playwright/test/cli.js",
           "test",
           "--config=playwright.media.config.ts",
+          ...(monitoring ? ["monitor.spec.ts"] : ["rooms.spec.ts"]),
           ...(process.env.PROBE_RECORD === "1"
-            ? ["--grep", "denied devices recover"]
+            ? ["--grep", monitoring ? "monitor demo" : "denied devices recover"]
             : []),
         ]
       : [
@@ -195,7 +244,9 @@ try {
         cleanupError,
         cloudUsage: 0,
         server: "1.13.11",
-        mode: "local fixture; Cloud/device/active-lease proof excluded",
+        mode: monitoring
+          ? "P1-02 local monitoring fixture; hosted revocation/replay and physical-device proof excluded"
+          : "P1-01 local fixture; Cloud/device proof excluded",
       },
       null,
       2
@@ -203,6 +254,10 @@ try {
   );
   await rm(`${directory}/assignments.json`, { force: true });
   await rm(`${directory}/invitations.json`, { force: true });
+  if (monitoring) {
+    await rm(`${directory}/monitor-invitations.json`, { force: true });
+    await rm(`${directory}/monitor-fixture.json`, { force: true });
+  }
   await lock.close();
   await rm(`${directory}/run.lock`);
   if (cleanupError || remaining?.length) {

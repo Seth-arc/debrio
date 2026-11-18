@@ -67,4 +67,15 @@ describe("P1-01 scoped fixture authorization", () => {
     expect((await POST(request("x".repeat(1025)))).status).toBe(413);
     expect((await POST(request("{"))).status).toBe(400);
   });
+  it("P1-02 disables the original issuer while monitoring notice gates are active", async () => {
+    vi.stubEnv("MEDIA_PROBE_ENABLED", "1");
+    vi.stubEnv("MEDIA_MONITOR_PROBE", "1");
+    expect(
+      (
+        await POST(
+          new Request("http://127.0.0.1/api/probe/grant", { method: "POST" })
+        )
+      ).status
+    ).toBe(404);
+  });
 });

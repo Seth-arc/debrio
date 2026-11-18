@@ -29,6 +29,8 @@
     "security:dependencies": "audit-ci --config audit-ci.json",
     "probe:local": "node scripts/run-media-probe.mjs",
     "test:media": "node scripts/run-media-probe.mjs --test",
+    "probe:monitor": "node scripts/run-media-probe.mjs --monitor",
+    "test:monitor": "node scripts/run-media-probe.mjs --monitor --test",
     "probe:agora": "node scripts/run-agora-probe.mjs"
   },
   "dependencies": {
