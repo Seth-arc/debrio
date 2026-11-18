@@ -109,13 +109,16 @@ try {
   }
   if (!available || interrupted)
     throw new Error("Local media provider did not become available");
-  for (const name of rooms)
+  for (const name of rooms) {
+    if (interrupted) throw new Error("Probe interrupted before launch");
     await client.createRoom({
       name,
       maxParticipants: 2,
       emptyTimeout: 600,
       departureTimeout: 600,
     });
+  }
+  if (interrupted) throw new Error("Probe interrupted before launch");
   const testing = process.argv.includes("--test");
   console.log(
     `Synthetic local run ${runId}; expires ${new Date(expiresAt).toISOString()}. Cloud usage: zero.`
@@ -150,8 +153,11 @@ try {
   );
   timer = setTimeout(interrupt, Math.max(0, expiresAt - Date.now()));
   const [code] = await once(child, "exit");
-  if (testing && (code !== 0 || interrupted)) process.exitCode = 1;
+  if ((!interrupted && code !== 0) || (testing && interrupted))
+    process.exitCode = 1;
 } finally {
+  process.removeListener("SIGINT", interrupt);
+  process.removeListener("SIGTERM", interrupt);
   clearTimeout(timer);
   child?.kill();
   const removed = [];

@@ -12,6 +12,7 @@ declare global {
   interface Window {
     LivekitClient: typeof import("livekit-client");
     probeRoom: Room;
+    probeReceivedTracks: string[];
   }
 }
 type Invitation = {
@@ -51,7 +52,15 @@ async function connect(page: Page, token: string, publish = true) {
         reconnectPolicy: { nextRetryDelayInMs: () => null },
       });
       window.probeRoom = room;
+      window.probeReceivedTracks = [];
       await room.connect(url, token, { maxRetries: 0 });
+      const manager = room.engine.pcManager;
+      if (!manager) throw new Error("Missing WebRTC transport");
+      const onTrack = manager.onTrack;
+      manager.onTrack = (event) => {
+        window.probeReceivedTracks.push(event.track.id);
+        onTrack?.(event);
+      };
       if (publish) await room.localParticipant.setMicrophoneEnabled(true);
       return room.name;
     },
@@ -117,6 +126,29 @@ test("P1-01-AC1/AC2: five rooms and another session isolate real SFU tracks", as
       }
     }
     const main = clients[0];
+    const received = () =>
+      main.page.evaluate(async () => {
+        const manager = window.probeRoom.engine.pcManager;
+        const reports = await Promise.all([
+          manager?.subscriber?.getStats(),
+          manager?.publisher.getStats(),
+        ]);
+        return {
+          rawTracks: window.probeReceivedTracks,
+          inbound: reports
+            .flatMap((report) => (report ? [...report.values()] : []))
+            .filter((row) => row.type === "inbound-rtp")
+            .map((row) => ({
+              id: row.id,
+              ssrc: row.ssrc,
+              track: row.trackIdentifier,
+            }))
+            .sort((a, b) => a.id.localeCompare(b.id)),
+        };
+      });
+    const authorizedMedia = await received();
+    expect(authorizedMedia.rawTracks).toHaveLength(1);
+    expect(authorizedMedia.inbound).toHaveLength(1);
     for (const foreign of [clients[2], clients[10]]) {
       const trackSid = await foreign.page.evaluate(
         () =>
@@ -135,6 +167,7 @@ test("P1-01-AC1/AC2: five rooms and another session isolate real SFU tracks", as
         >[0]);
       }, trackSid);
       await main.page.waitForTimeout(2000);
+      expect(await received()).toEqual(authorizedMedia);
       await expect
         .poll(() =>
           main.page.evaluate(() => [

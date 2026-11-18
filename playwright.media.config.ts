@@ -12,13 +12,14 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:3101",
     browserName: "chromium",
     channel: "chromium",
+    viewport: { width: 1280, height: 1100 },
     launchOptions: { args: ["--use-fake-device-for-media-stream"] },
     permissions: ["microphone", "camera"],
     trace: "off",
     screenshot: "off",
     video:
       process.env.PROBE_RECORD === "1"
-        ? { mode: "on", size: { width: 1280, height: 960 } }
+        ? { mode: "on", size: { width: 1280, height: 1100 } }
         : "off",
   },
   webServer: {
