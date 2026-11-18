@@ -1,6 +1,6 @@
 # P0-02 decision and evidence register
 
-18 November 2026. This is the narrow decision record for [the P0-02 card](../../engineering/PROMPTBOOK.md#p0-02--select-the-stack-and-initial-architecture), not another PRD. Read the [architecture proposal](../../../ARCHITECTURE.md) and [task evidence](../../engineering/records/P0-02.md). Decision owner: the user/platform owner. No new mechanisms are marked accepted without their confirmation.
+18 November 2026. This is the narrow decision record for [the P0-02 card](../../engineering/PROMPTBOOK.md#p0-02--select-the-stack-and-initial-architecture), not another PRD. Read the [accepted architecture](../../../ARCHITECTURE.md) and [task evidence](../../engineering/records/P0-02.md). Decision owner: the user/platform owner, who explicitly confirmed “Accept D1–D6 as proposed” after the reviewed PR and concrete decision summary were presented.
 
 ## Existing acceptance and prerequisites
 
@@ -9,9 +9,9 @@
 - Accepted product inputs: consultant/individual workspaces, separate session/billing authority, single workspace owner with accepted transfer, private session identities with verified optional account link, immutable single-owner attempts and contributor history. Keep the 18 November PRD clarifications intact.
 - Accepted no-new-infrastructure-spend, invitation-only complete tester pilot, supplied debrio.app and prospective US East Coast contact. On 18 November the user confirmed they control DNS, have no location/language/data-residency constraints, and have created Supabase and LiveKit projects **only in their dashboards**. No Next.js implementation exists on another supplied branch. Actual DNS/project settings and account allowances have not been inspected; pilot accommodation validation remains required.
 
-## Reviewable decisions requiring confirmation
+## Accepted decisions and remaining proof gates
 
-| ID | Proposed answer / consequence | Blocking scope and alternative |
+| ID | Accepted answer / consequence | Blocking scope and alternative |
 |---|---|---|
 | D1 | Private hashed guest credential in secure cookie, per-session endpoint epoch and server-mediated data. Account participants use verified Auth linkage, no automatic guest-work merge | Accept before P2-01 identity implementation. Alternative: Supabase anonymous Auth, requiring proven admission, cleanup and guest recovery mapping. Host login choice stays in P2-01. |
 | D2 | Supabase Cron + authenticated HTTP dispatch to bounded Vercel handler, durable PostgreSQL intents. Test 10-second dispatch / 20-second invocation / 30-second claims | Accept before dependent job implementation; verify account cadence/runtime/usage before hosted enablement. Alternative: verified Vercel scheduler or a managed narrow runner within existing allowance. No persistent caption stream in either path. |
@@ -20,7 +20,7 @@
 | D5 | One optional 24-hour reminder; essential change/security/lifecycle notices; explicit billing sender ownership; proposed sender/Reply-To; 30-day delivery metadata, seven-day operational and 90-day security logs | Accept policy before P4-06 and sender/retention configuration before sending. Mailbox/domain/provider retention remain factual blockers. Alternative: no optional reminders initially; essential transactional behavior remains required. |
 | D6 | Proposed disaster RPO ≤24 h and RTO ≤8 h after operator acknowledgement, daily coherent DB/object export with seven-day rotation; independently durable control journal, quarantined restore | Accept objectives before hosting real data and prove in P5-02. Normal acknowledged-save durability is unchanged. Destination/allowance/coherence are unverified; if unavailable, block hosted data rather than claim recoverability. |
 
-No confirmation has yet been received for D1–D6. A proposal can be reviewed and delivered while acceptance stays blocked; dependent implementation must obey these scopes and the card's P0-03 architecture/account gate. Commercial numbers do not block scaffolding, but the user must accept the initial offer after feasibility and before P6-03.
+**Confirmation received on 18 November 2026:** user response “Accept D1–D6 as proposed,” referencing PR #2 and this register. The “accept before” obligations in the table are satisfied for these six design decisions; implementation/provider evidence remains outstanding. Dependent implementation must obey the stated scopes and the card's P0-03 account gate. Commercial numbers do not block scaffolding, but the user must accept the initial offer after feasibility and before P6-03. No new spending, merge or deployment is authorized by this design confirmation.
 
 ## Provider evidence checked 18 November 2026
 
@@ -57,6 +57,6 @@ Read-only connected GitHub evidence verifies repository identity/default branch 
 
 ## Criterion walkthrough / review scope
 
-P0-02-AC1 is assessed against the architecture's module table, data constraints, four walkthroughs, R1–R8 matrix and INV-1–INV-10. P0-02-AC2 requires a fresh independent architecture review and local rendered diagram inspection. P0-02-AC3 preserves existing stack acceptance but remains Unverified for new owner decisions/account facts. No runtime criterion is passed by prose or diagram rendering.
+P0-02-AC1 is assessed against the architecture's module table, data constraints, four walkthroughs, R1–R8 matrix and INV-1–INV-10. P0-02-AC2 has fresh independent architecture review and local rendered diagram inspection. P0-02-AC3 now has actual D1–D6 owner confirmation and existing stack acceptance; account facts remain Unverified, with dependent tasks blocked as documented. No runtime criterion is passed by prose or diagram rendering.
 
 Review must challenge commit-before-provider failure, stale in-flight calls, malicious clients during control outages, concurrent global admission, copy/export approval bypass, email ambiguity, old-client rollback and restored deleted data. Record findings and dispositions in the task record. Do not expand P0-02 into application scaffolding or provider configuration.

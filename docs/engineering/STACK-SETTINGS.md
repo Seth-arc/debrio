@@ -237,7 +237,7 @@ Routes to implement and record, with exact paths settled in code: Auth callback/
 
 ## 11. Durable jobs and operating settings
 
-P0-02 proposes Supabase Cron/pg_net dispatch to a bounded Vercel handler; see [D2 and its limits](../../ARCHITECTURE.md#commands-acknowledgement-and-durable-reconciliation). Owner acceptance, extension/runtime configuration and actual allowance remain unverified. No runner has been provisioned.
+P0-02's D2 is accepted by the user: Supabase Cron/pg_net dispatch to a bounded Vercel handler; see [D2 and its limits](../../ARCHITECTURE.md#commands-acknowledgement-and-durable-reconciliation). Extension/runtime configuration and actual allowance remain unverified. No runner has been provisioned.
 
 | Setting | Required value or behavior |
 |---|---|
@@ -291,7 +291,7 @@ For each item record: responsible person, environment, non-secret resource ID, s
 | Gate | Required evidence | Status |
 |---|---|---|
 | P0-01 baseline | Intended remote/history, reviewed baseline, ignore rules, skill paths and Git convention | Ready for P0-01 scope; PR #1 merged; application CI still P0-03 |
-| P0-02 architecture/accounts | Actual account plans/allowances, regions, environment isolation, runner/caption design and settings ownership | Proposal prepared; dashboard projects/DNS control confirmed by user; acceptance/configuration/allowances unverified |
+| P0-02 architecture/accounts | Actual account plans/allowances, regions, environment isolation, runner/caption design and settings ownership | D1–D6 design accepted; dashboard projects/DNS control confirmed by user; configuration/allowances unverified |
 | P0-03 local/CI foundation | Repeatable setup/build/tests, titled migrations, safe variables, isolated database and CI proof | Unknown |
 | P1-06 media feasibility | Real multi-device media/caption/isolation/recording-disabled evidence and measured allowance fit | Unknown |
 | P2-01/P4-06 identity/mail | Privileged MFA/recovery, private guest identity, authorized Postmark SMTP/API/callback delivery | Unknown |
