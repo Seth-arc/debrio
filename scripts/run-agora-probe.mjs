@@ -134,6 +134,7 @@ const sample = async () => {
 try {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
+  assert(!interrupted, "Probe interrupted before browser launch");
   const browserEnv = Object.fromEntries(
     Object.entries(process.env).filter(([key]) =>
       /^(PATH|SYSTEMROOT|WINDIR|TEMP|TMP|USERPROFILE|LOCALAPPDATA|APPDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|COMSPEC)$/i.test(
@@ -147,6 +148,10 @@ try {
     env: browserEnv,
     args: ["--autoplay-policy=no-user-gesture-required"],
   });
+  assert(
+    !interrupted && Date.now() < runExpiresAt,
+    "Probe interrupted or expired during browser launch"
+  );
   watchdog = setTimeout(stop, Math.max(1, runExpiresAt - Date.now()));
   browser = await chromium.connect(browserServer.wsEndpoint());
   report.browser = browser.version();
