@@ -92,6 +92,21 @@ export default function MonitoringProbe() {
   function cancelPending() {
     generation.current++;
   }
+  function syncParticipantPlayback() {
+    const value = latest.current;
+    if (value?.role !== "participant" || !active.current) return;
+    for (const participant of active.current.remoteParticipants.values()) {
+      // Cooperative late-join notice gate, not a narrower provider permission.
+      const allowed =
+        !participant.identity.startsWith("monitor-") ||
+        (value.route?.identity === participant.identity &&
+          ["notice", "active"].includes(value.route.phase) &&
+          value.route.acknowledged.includes(value.identity));
+      for (const publication of participant.trackPublications.values())
+        if (publication.isDesired !== allowed)
+          publication.setSubscribed(allowed);
+    }
+  }
   function stopScan() {
     scan.current = false;
     setScanning(false);
@@ -130,7 +145,8 @@ export default function MonitoringProbe() {
     const poll = async () => {
       try {
         const value = await call({ action: "read" });
-        if (disposed) return;
+        if (disposed || value.revision < (latest.current?.revision ?? 0))
+          return;
         update(value);
         if (
           value.role === "participant" &&
@@ -144,8 +160,16 @@ export default function MonitoringProbe() {
             !disposed &&
             notice.current?.dataset.route === String(value.route.id)
           )
-            await call({ action: "ack", route: value.route.id });
+            try {
+              update(await call({ action: "ack", route: value.route.id }));
+            } catch (error) {
+              if (!(error instanceof RequestError) || error.status !== 409)
+                throw error;
+            }
         }
+        if (disposed || value.revision < (latest.current?.revision ?? 0))
+          return;
+        syncParticipantPlayback();
         if (
           (value.revoked && value.role === "facilitator") ||
           (value.role === "facilitator" &&
@@ -213,11 +237,13 @@ export default function MonitoringProbe() {
     attempt: number,
     revision?: number
   ) {
+    if (attempt !== generation.current) return;
     const room = new Room({
       reconnectPolicy: { nextRetryDelayInMs: () => null },
     });
     active.current = room;
     activeRevision.current = revision;
+    room.on(RoomEvent.TrackPublished, syncParticipantPlayback);
     room.on(RoomEvent.TrackSubscribed, (track) => {
       output.current?.append(track.attach());
     });
@@ -236,13 +262,14 @@ export default function MonitoringProbe() {
         void stop("Connection interrupted. Rejoin explicitly.", revision);
     });
     await room.connect(grant.url, grant.token, {
-      autoSubscribe: mode === "participant",
+      autoSubscribe: false,
       maxRetries: 0,
     });
     if (attempt !== generation.current) {
       await room.disconnect();
       return;
     }
+    syncParticipantPlayback();
     if (mode !== "listen") {
       const acquired = await createLocalTracks({
         audio: true,
@@ -318,7 +345,12 @@ export default function MonitoringProbe() {
         );
       await connect(granted.grant, mode, attempt, prepared.revision);
       if (attempt !== generation.current) return;
-      update(await call({ action: "connected", route: prepared.route?.id }));
+      const confirmed = await call({
+        action: "connected",
+        route: prepared.route?.id,
+      });
+      if (attempt !== generation.current) return;
+      update(confirmed);
       setMessage(
         `${mode === "listen" ? "Listening" : mode === "speak" ? "Speaking" : "Joined"}: ${room}.`
       );

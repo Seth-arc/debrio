@@ -73,6 +73,56 @@ function setup() {
 }
 
 describe("P1-02 scoped route controller", () => {
+  it("AC2 Stop fences an older request even when the route is already empty", async () => {
+    const { controller, state } = setup();
+    await controller.handle(request(0, "stop"));
+    expect(state.next).toBeGreaterThan(0);
+    await expect(
+      controller.handle(
+        request(0, "request", { target: "breakout-1", mode: "speak" })
+      )
+    ).rejects.toMatchObject({ status: 409 });
+    expect(state.route).toBeNull();
+  });
+  it("AC1 refreshes the notice audience for a participant whose earlier grant joins late", async () => {
+    const { state, provider, persist, sign } = setup();
+    const lateFixture: MonitorFixture = {
+      ...fixture,
+      assignments: fixture.assignments.map((a) =>
+        a.identity === "p2"
+          ? { ...a, room: "breakout-1", providerRoom: "a-breakout-1" }
+          : a
+      ),
+    };
+    provider.listParticipants.mockResolvedValueOnce([
+      { identity: "p1", tracks: [] },
+    ]);
+    provider.listParticipants.mockResolvedValue([
+      { identity: "p1", tracks: [] },
+      { identity: "p2", tracks: [] },
+    ]);
+    const controller = new MonitorProbe(
+      lateFixture,
+      state,
+      provider as unknown as RoomServiceClient,
+      persist,
+      sign
+    );
+    await controller.handle(request(2, "grant", { room: "breakout-1" }));
+    await controller.handle(
+      request(0, "request", { target: "breakout-1", mode: "speak" })
+    );
+    await controller.handle(request(1, "ack", { route: state.route!.id }));
+    await expect(
+      controller.handle(request(0, "grant", { route: state.route!.id }))
+    ).rejects.toMatchObject({ status: 409 });
+    expect(sign).toHaveBeenCalledTimes(1);
+    await controller.handle(
+      request(2, "ack", { room: "breakout-1", route: state.route!.id })
+    );
+    await controller.handle(request(0, "grant", { route: state.route!.id }));
+    expect(sign).toHaveBeenCalledTimes(2);
+  });
   it("AC1 denies grants before the correct room notice and does not expose another session", async () => {
     const { controller, state, sign } = setup();
     await controller.handle(

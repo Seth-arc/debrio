@@ -13,6 +13,7 @@ import {
   TrackSource,
 } from "livekit-server-sdk";
 import { initialMonitorState } from "../../lib/monitor-probe";
+import type { MonitorView } from "../../lib/monitor-probe";
 
 declare global {
   interface Window {
@@ -81,6 +82,34 @@ async function locallyClosed(page: Page) {
 async function demoPause(page: Page) {
   // Presentation dwell only, after assertions; never used to synchronize a test.
   if (process.env.PROBE_RECORD === "1") await page.waitForTimeout(1200);
+}
+async function holdReply(
+  page: Page,
+  action: string,
+  matches: (value: MonitorView) => boolean = () => true
+) {
+  let release!: () => void;
+  let captured!: (value: MonitorView) => void;
+  let held = false;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const value = new Promise<MonitorView>((resolve) => {
+    captured = resolve;
+  });
+  await page.route("**/api/probe/monitor", async (route) => {
+    if (held || route.request().postDataJSON()?.action !== action)
+      return route.continue();
+    const response = await route.fetch();
+    const data = await response.json();
+    if (matches(data)) {
+      held = true;
+      captured(data);
+      await gate;
+    }
+    await route.fulfill({ response });
+  });
+  return { value, release };
 }
 
 type Invitation = {
@@ -564,6 +593,137 @@ test("P1-02 AC2: an old tab's disconnect cleanup cannot close a newer route", as
   );
   await newer.getByRole("button", { name: "Stop / Retry Stop" }).click();
   await locallyClosed(newer);
+});
+
+test("P1-02 AC2: delayed connection confirmation cannot undo Stop", async ({
+  page,
+  browser,
+}) => {
+  const one = await peerPage(browser);
+  await participant(one, "breakout-1-1");
+  await enter(page, invite("facilitator"));
+  const held = await holdReply(page, "connected");
+  await page.getByRole("button", { name: "Listen", exact: true }).click();
+  await held.value;
+  await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
+  await expect
+    .poll(
+      async () =>
+        (await (await api(page, invite("facilitator"), "read")).json()).route
+    )
+    .toBeNull();
+  held.release();
+  await expect(
+    page.getByRole("button", { name: "Listen", exact: true })
+  ).toBeEnabled();
+  await expect(page.getByTestId("connection-status")).not.toContainText(
+    "Listening:"
+  );
+  await locallyClosed(page);
+});
+
+test("P1-02 AC2: an obsolete failed poll cannot stop a recovered route", async ({
+  page,
+  browser,
+}) => {
+  const one = await peerPage(browser);
+  await participant(one, "breakout-1-1");
+  await enter(page, invite("facilitator"));
+  await page.getByRole("button", { name: "Listen", exact: true }).click();
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Listening:"
+  );
+  const held = await holdReply(
+    page,
+    "read",
+    (value) => value.route?.phase === "failed"
+  );
+  await api(page, invite("operator"), "fault", { enabled: true });
+  await held.value;
+  await api(page, invite("operator"), "fault", { enabled: false });
+  await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Route changed"
+  );
+  await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
+  await expect(one.getByTestId("notice")).toHaveText(
+    "No active facilitator route."
+  );
+  await page.getByRole("button", { name: "Listen", exact: true }).click();
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Listening:"
+  );
+  const received = page.waitForResponse(
+    (response) => response.request().postDataJSON()?.action === "read"
+  );
+  held.release();
+  await received;
+  await flowing(page, "inbound-rtp");
+  await expect(page.getByTestId("media-state")).toContainText(
+    "Media connected"
+  );
+  await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
+  await locallyClosed(page);
+});
+
+test("P1-02 AC1: an already-issued participant grant cannot play intervention before notice acknowledgement", async ({
+  page,
+  browser,
+}) => {
+  const one = await peerPage(browser);
+  const late = await peerPage(browser);
+  await participant(one, "breakout-1-1");
+  await enter(late, invite("breakout-1-2"));
+  let release!: () => void;
+  let captured!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const fetched = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  await late.route("**/api/probe/monitor", async (route) => {
+    const action = route.request().postDataJSON()?.action;
+    if (action === "ack")
+      return route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: '{"error":"held notice"}',
+      });
+    if (action !== "grant") return route.continue();
+    const response = await route.fetch();
+    captured();
+    await gate;
+    await route.fulfill({ response });
+  });
+  await late.getByRole("button", { name: "Join assigned room" }).click();
+  await fetched;
+  await enter(page, invite("facilitator"));
+  await page.getByRole("button", { name: "Speak", exact: true }).click();
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Speaking:"
+  );
+  release();
+  await expect(late.getByTestId("media-state")).toContainText(
+    "Media connected"
+  );
+  await expect(late.getByTestId("notice")).toContainText(
+    "Facilitator Ada speaking"
+  );
+  await flowing(late, "inbound-rtp");
+  await expect(late.getByTestId("media-state")).toContainText(
+    "Received tracks: 1"
+  );
+  const pending = await (await api(page, invite("facilitator"), "read")).json();
+  expect(pending.route.acknowledged).not.toContain("breakout-1-2");
+  await late.unroute("**/api/probe/monitor");
+  await expect(late.getByTestId("media-state")).toContainText(
+    "Received tracks: 2"
+  );
+  await expect(page.getByTestId("media-state")).toContainText(
+    "Received tracks: 2"
+  );
+  await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
 });
 
 test("P1-02 AC3: a delayed acknowledgement never marks newer edits saved", async ({

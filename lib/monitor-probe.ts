@@ -176,6 +176,18 @@ export class MonitorProbe {
     }
   }
 
+  private async connectedAudience(providerRoom: string) {
+    const present = await this.provider.listParticipants(providerRoom);
+    return this.fixture.assignments
+      .filter(
+        (a) =>
+          a.role === "participant" &&
+          a.providerRoom === providerRoom &&
+          present.some((p) => p.identity === a.identity)
+      )
+      .map((a) => a.identity);
+  }
+
   async handle(input: unknown) {
     const actor = authorizeProbe(input, this.fixture) as Actor | undefined;
     if (!actor || !input || typeof input !== "object")
@@ -275,6 +287,8 @@ export class MonitorProbe {
           409,
           "Route changed. Refresh status before retrying Stop."
         );
+      this.state.next++;
+      await this.event("stop-requested");
       await this.closeRoute();
       return view();
     }
@@ -298,15 +312,7 @@ export class MonitorProbe {
       await this.closeRoute();
       if (this.state.controlFailure)
         throw new ProbeError(503, "Provider control unavailable.");
-      const present = await this.provider.listParticipants(target.providerRoom);
-      const required = this.fixture.assignments
-        .filter(
-          (a) =>
-            a.role === "participant" &&
-            a.providerRoom === target.providerRoom &&
-            present.some((p) => p.identity === a.identity)
-        )
-        .map((a) => a.identity);
+      const required = await this.connectedAudience(target.providerRoom);
       if (!required.length)
         throw new ProbeError(
           409,
@@ -352,6 +358,21 @@ export class MonitorProbe {
           !["notice", "active"].includes(route.phase))
       )
         throw new ProbeError(403, "Route permission denied.");
+      if (facilitator && route) {
+        const current = await this.connectedAudience(route.providerRoom);
+        if (!current.length)
+          throw new ProbeError(
+            409,
+            "Room unavailable: no connected synthetic participants."
+          );
+        if (
+          current.length !== route.required.length ||
+          current.some((identity) => !route.required.includes(identity))
+        ) {
+          route.required = current;
+          await this.event("notice-audience-updated");
+        }
+      }
       if (
         facilitator &&
         route &&
