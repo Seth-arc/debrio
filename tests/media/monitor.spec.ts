@@ -376,8 +376,13 @@ test("P1-02 Cloud qualification: hostile subscriptions, publication, removal and
         try {
           await room.connect(url, token, { maxRetries: 0 });
           return "joined";
-        } catch {
-          return "denied";
+        } catch (error) {
+          const denied =
+            error instanceof window.LivekitClient.ConnectionError &&
+            error.reason ===
+              window.LivekitClient.ConnectionErrorReason.NotAllowed &&
+            [401, 403].includes(error.status ?? 0);
+          return denied ? "denied" : "unexpected connection failure";
         } finally {
           await room.disconnect();
         }
@@ -394,7 +399,9 @@ test("P1-02 Cloud qualification: hostile subscriptions, publication, removal and
     page.evaluate(
       () => (window.probeRoom.engine as unknown as { token: string }).token
     );
-  await expect.poll(refreshed).not.toBe(grant.token);
+  await expect
+    .poll(async () => (await verifier.verify(await refreshed())).metadata)
+    .toBe("synthetic-refresh");
   const refreshedToken = await refreshed();
   const refreshedClaims = await verifier.verify(refreshedToken);
   const serverVersion = await page.evaluate(
@@ -427,13 +434,6 @@ test("P1-02 Cloud qualification: hostile subscriptions, publication, removal and
   if (cloud) {
     expect(originalClaims.exp!).toBeGreaterThan(Math.floor(Date.now() / 1000));
     expect(await replay(grant.token)).toBe("denied");
-    expect(await replay(refreshedToken)).toBe("denied");
-    // Explicit cutoff also revokes an identity which has already left.
-    await provider.removeParticipant(
-      state.route.providerRoom,
-      state.route.identity,
-      { revokeTokenTs: revocationCutoff() }
-    );
     expect(await replay(refreshedToken)).toBe("denied");
   }
   // A new permitted speaking route is a positive control for publication and active revocation.
@@ -485,6 +485,92 @@ test("P1-02 Cloud qualification: hostile subscriptions, publication, removal and
       await api(page, invite("facilitator"), "grant", { route: state.route.id })
     ).status()
   ).toBe(403);
+  const boundaries: {
+    kind: string;
+    nbf: number;
+    exp: number;
+    removalRequestAt: number;
+    cutoff: number;
+    equalityCutoff?: number;
+    equalityResult?: string;
+    equalityRequestAt?: number;
+  }[] = [];
+  if (cloud) {
+    for (const kind of [
+      "refreshed token equality",
+      "first removal while absent",
+    ]) {
+      const actor = invite(
+        kind === "refreshed token equality" ? "breakout-3-1" : "breakout-4-1"
+      );
+      const freshGrant = (await (await api(page, actor, "grant")).json()).grant;
+      await page.evaluate(async (grant) => {
+        window.probeRoom = new window.LivekitClient.Room();
+        await window.probeRoom.connect(grant.url, grant.token);
+      }, freshGrant);
+      let replayToken = freshGrant.token;
+      if (kind === "refreshed token equality") {
+        await provider.updateParticipant(actor.providerRoom, actor.identity, {
+          metadata: "same-second-boundary",
+        });
+        await expect
+          .poll(
+            async () => (await verifier.verify(await refreshed())).metadata,
+            { intervals: [10], timeout: 2000 }
+          )
+          .toBe("same-second-boundary");
+        replayToken = await refreshed();
+      } else {
+        await page.evaluate(() => window.probeRoom.disconnect());
+        expect(
+          (await provider.listParticipants(actor.providerRoom)).some(
+            (p) => p.identity === actor.identity
+          )
+        ).toBe(false);
+      }
+      const claims = await verifier.verify(replayToken);
+      let equalityResult: string | undefined;
+      let equalityRequestAt: number | undefined;
+      if (kind === "refreshed token equality") {
+        expect(claims.exp!).toBeGreaterThan(Math.floor(Date.now() / 1000));
+        equalityRequestAt = Date.now();
+        await provider.removeParticipant(actor.providerRoom, actor.identity, {
+          revokeTokenTs: BigInt(claims.nbf!),
+        });
+        await expect
+          .poll(() => page.evaluate(() => window.probeRoom.state))
+          .toBe("disconnected");
+        equalityResult = await replay(replayToken);
+        expect(equalityResult).toBe("joined");
+        expect(claims.exp!).toBeGreaterThan(Math.floor(Date.now() / 1000));
+      }
+      const removalRequestAt = Date.now();
+      const cutoff = revocationCutoff(removalRequestAt);
+      expect(Number(cutoff)).toBeGreaterThan(claims.nbf!);
+      expect(claims.exp!).toBeGreaterThan(Math.floor(removalRequestAt / 1000));
+      expect(claims.exp!).toBeLessThanOrEqual(
+        Math.floor(removalRequestAt / 1000) + 600
+      );
+      await provider.removeParticipant(actor.providerRoom, actor.identity, {
+        revokeTokenTs: cutoff,
+      });
+      await expect
+        .poll(() => page.evaluate(() => window.probeRoom.state))
+        .toBe("disconnected");
+      expect(await replay(replayToken)).toBe("denied");
+      expect(claims.exp!).toBeGreaterThan(Math.floor(Date.now() / 1000));
+      boundaries.push({
+        kind,
+        nbf: claims.nbf!,
+        exp: claims.exp!,
+        removalRequestAt,
+        cutoff: Number(cutoff),
+        equalityCutoff: equalityResult ? claims.nbf : undefined,
+        equalityResult,
+        equalityRequestAt,
+      });
+    }
+  }
   await mkdir(".artifacts/P1-02", { recursive: true });
   await writeFile(
     ".artifacts/P1-02/qualification.json",
@@ -497,6 +583,7 @@ test("P1-02 Cloud qualification: hostile subscriptions, publication, removal and
         removalMs,
         revokeMs,
         serverVersion,
+        boundaries,
         original: { nbf: originalClaims.nbf, exp: originalClaims.exp },
         refreshed: { nbf: refreshedClaims.nbf, exp: refreshedClaims.exp },
         cachedReplay: cloud
