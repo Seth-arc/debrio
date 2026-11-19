@@ -48,7 +48,30 @@ export type Host =
       supabase: SupabaseClient;
       user: User;
       verifiedFactorIds: string[];
+      // Unix seconds of this session's latest authenticator code, if any.
+      codeVerifiedAt: number | null;
     };
+
+export type SignedInHost = Extract<Host, { state: "aal1" | "aal2" }>;
+
+// Sensitive changes need an authenticator code entered within the last 10 minutes.
+export const hasFreshCode = (
+  codeVerifiedAt: number | null,
+  nowSeconds = Date.now() / 1000
+) => codeVerifiedAt !== null && nowSeconds - codeVerifiedAt < 600;
+
+// Latest authenticator-code time in a session's methods (amr). Older tokens
+// list methods as bare strings, which carry no time.
+export function latestCodeTime(
+  methods: (string | { method: string; timestamp: number })[]
+) {
+  const times = methods.flatMap((entry) =>
+    typeof entry === "object" && entry.method === "totp"
+      ? [entry.timestamp]
+      : []
+  );
+  return times.length > 0 ? Math.max(...times) : null;
+}
 
 // The Auth server verifies the session on every call; cookies alone are not trusted.
 export async function currentHost(): Promise<Host> {
@@ -70,6 +93,7 @@ export async function currentHost(): Promise<Host> {
     supabase,
     user: data.user,
     verifiedFactorIds,
+    codeVerifiedAt: latestCodeTime(level?.currentAuthenticationMethods ?? []),
   };
 }
 

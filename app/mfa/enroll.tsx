@@ -18,7 +18,13 @@ export const CODE_FIELD = {
 } as const;
 
 // Shows the TOTP secret only to its owner, only while setting it up.
-export function EnrollAuthenticator({ start }: { start: string }) {
+export function EnrollAuthenticator({
+  start,
+  next,
+}: {
+  start: string;
+  next?: "account";
+}) {
   const [enrollment, startAction, pending] = useActionState<Enrollment>(
     startEnrollment,
     null
@@ -60,7 +66,7 @@ export function EnrollAuthenticator({ start }: { start: string }) {
       <Form
         action={verifyEnrollment}
         submit="Verify and continue"
-        hidden={{ factorId: enrollment.factorId }}
+        hidden={{ factorId: enrollment.factorId, ...(next ? { next } : {}) }}
         fields={[CODE_FIELD]}
       />
     </section>

@@ -4,6 +4,7 @@ import { signIn } from "../auth/actions";
 import { supabaseConfig } from "../../lib/supabase";
 import { Form } from "../form";
 import { HostProblem } from "../host-problem";
+import { emailNotice } from "../notices";
 
 // Identity is per request; never prerender.
 export const dynamic = "force-dynamic";
@@ -12,14 +13,16 @@ export const metadata: Metadata = { title: "Sign in · Debrio" };
 export default async function SignIn({
   searchParams,
 }: {
-  searchParams: Promise<{ confirm?: string }>;
+  searchParams: Promise<{ confirm?: string; email?: string }>;
 }) {
   if (!supabaseConfig()) return <HostProblem state="unconfigured" />;
-  const { confirm } = await searchParams;
+  const { confirm, email } = await searchParams;
+  const notice = emailNotice(email, "signed-out");
   return (
     <main>
       <p className="wordmark">Debrio</p>
       <h1>Sign in</h1>
+      {notice && <p role="status">{notice}</p>}
       {confirm === "failed" && (
         <p role="status">
           That link didn&apos;t sign you in. It may have expired, been used
@@ -46,6 +49,9 @@ export default async function SignIn({
           },
         ]}
       />
+      <p>
+        <Link href="/forgot-password">Forgot your password?</Link>
+      </p>
       <p>
         New to Debrio? <Link href="/sign-up">Create an account</Link>
       </p>

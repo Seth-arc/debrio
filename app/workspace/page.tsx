@@ -90,6 +90,9 @@ export default async function Workspace() {
           </>
         )}
       </section>
+      <p>
+        <Link href="/account">Account and sign-in</Link>
+      </p>
       {signOutForm}
     </main>
   );
