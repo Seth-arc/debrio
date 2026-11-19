@@ -1,6 +1,6 @@
 /* eslint-disable security/detect-non-literal-fs-filename -- paths are private mkdtemp fixtures, never user input */
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, vi } from "vitest";
@@ -11,6 +11,11 @@ import {
   writeMonitorState,
   type MonitorFixture,
 } from "../../lib/monitor-probe";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, rename: vi.fn(actual.rename) };
+});
 
 const actors = [
   { identity: "facilitator", role: "facilitator", room: "main", session: "a" },
@@ -73,6 +78,28 @@ function setup() {
 }
 
 describe("P1-02 scoped route controller", () => {
+  it("AC3 retries a transient replacement lock but never acknowledges or deletes the prior file on persistent failure", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "debrio-monitor-lock-"));
+    const path = join(directory, "state.json");
+    try {
+      const original = initialMonitorState();
+      await writeMonitorState(path, original);
+      const error = Object.assign(new Error("Synthetic file lock"), {
+        code: "EPERM",
+      });
+      vi.mocked(rename).mockRejectedValueOnce(error);
+      await writeMonitorState(path, { ...original, next: 1 });
+      expect(JSON.parse(await readFile(path, "utf8")).next).toBe(1);
+      for (let attempt = 0; attempt < 4; attempt++)
+        vi.mocked(rename).mockRejectedValueOnce(error);
+      await expect(
+        writeMonitorState(path, { ...original, next: 2 })
+      ).rejects.toMatchObject({ code: "EPERM" });
+      expect(JSON.parse(await readFile(path, "utf8")).next).toBe(1);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it("AC2 Stop fences an older request even when the route is already empty", async () => {
     const { controller, state } = setup();
     await controller.handle(request(0, "stop"));

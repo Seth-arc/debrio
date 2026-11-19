@@ -116,7 +116,7 @@ export default function MonitoringProbe() {
     reason = "Stopped. Rejoin explicitly to transmit again.",
     revision = activeRevision.current ?? latest.current?.revision
   ) {
-    generation.current++;
+    const attempt = ++generation.current;
     stopScan();
     localStop();
     setMessage(reason);
@@ -124,13 +124,15 @@ export default function MonitoringProbe() {
       setMessage(`${reason} Confirming route cleanup…`);
       try {
         update(await call({ action: "stop", revision }));
-        setMessage(reason);
+        if (attempt === generation.current) setMessage(reason);
       } catch (error) {
+        if (attempt !== generation.current) return;
         try {
           update(await call({ action: "read" }));
         } catch {
           /* Keep the last known state. */
         }
+        if (attempt !== generation.current) return;
         setMessage(
           `Local media stopped. ${error instanceof Error ? error.message : "Cleanup unconfirmed."}`
         );
@@ -143,6 +145,7 @@ export default function MonitoringProbe() {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
+      const attempt = generation.current;
       try {
         const value = await call({ action: "read" });
         if (disposed || value.revision < (latest.current?.revision ?? 0))
@@ -173,6 +176,9 @@ export default function MonitoringProbe() {
         if (
           (value.revoked && value.role === "facilitator") ||
           (value.role === "facilitator" &&
+            activeRevision.current !== undefined &&
+            value.revision !== activeRevision.current) ||
+          (value.role === "facilitator" &&
             value.controlFailure &&
             (active.current || running.current || scan.current)) ||
           (value.role === "facilitator" &&
@@ -185,7 +191,7 @@ export default function MonitoringProbe() {
           setMessage(
             value.revoked
               ? "Facilitator permission revoked. Local media stopped."
-              : "Media stopped; cleanup/recovery requires an explicit action."
+              : "Route changed or cleanup unconfirmed. Media stopped; recovery requires an explicit action."
           );
         }
         if (active.current)
@@ -198,7 +204,7 @@ export default function MonitoringProbe() {
           });
         if (Date.now() >= value.expiresAt) await stop("Synthetic run expired.");
       } catch {
-        if (!disposed) {
+        if (!disposed && attempt === generation.current) {
           const cleanupRevision = activeRevision.current;
           generation.current++;
           stopScan();
@@ -237,7 +243,10 @@ export default function MonitoringProbe() {
     attempt: number,
     revision?: number
   ) {
-    if (attempt !== generation.current) return;
+    const current = () =>
+      attempt === generation.current &&
+      (revision === undefined || revision === latest.current?.revision);
+    if (!current()) return;
     const room = new Room({
       reconnectPolicy: { nextRetryDelayInMs: () => null },
     });
@@ -265,7 +274,7 @@ export default function MonitoringProbe() {
       autoSubscribe: false,
       maxRetries: 0,
     });
-    if (attempt !== generation.current) {
+    if (!current()) {
       await room.disconnect();
       return;
     }
@@ -275,14 +284,14 @@ export default function MonitoringProbe() {
         audio: true,
         video: camera && mode !== "speak",
       });
-      if (attempt !== generation.current) {
+      if (!current()) {
         acquired.forEach((track) => track.stop());
         await room.disconnect();
         return;
       }
       tracks.current = acquired;
       for (const track of acquired) {
-        if (attempt !== generation.current) {
+        if (!current()) {
           track.stop();
           await room.disconnect();
           return;
@@ -297,7 +306,7 @@ export default function MonitoringProbe() {
         await room.localParticipant.publishTrack(track);
       }
     }
-    if (attempt !== generation.current) {
+    if (!current()) {
       await room.disconnect();
       return;
     }
@@ -323,6 +332,9 @@ export default function MonitoringProbe() {
       });
       ownedRevision = prepared.revision;
       update(prepared);
+      if (ownedRevision !== latest.current?.revision)
+        throw new Error("Route changed. Rejoin explicitly.");
+      activeRevision.current = ownedRevision;
       let granted: Reply | undefined;
       for (
         let tries = 0;
@@ -339,12 +351,16 @@ export default function MonitoringProbe() {
         }
       }
       if (attempt !== generation.current) return;
+      if (ownedRevision !== latest.current?.revision)
+        throw new Error("Route changed. Rejoin explicitly.");
       if (!granted?.grant)
         throw new Error(
           "Room unavailable: participant notice not acknowledged."
         );
       await connect(granted.grant, mode, attempt, prepared.revision);
       if (attempt !== generation.current) return;
+      if (ownedRevision !== latest.current?.revision)
+        throw new Error("Route changed. Rejoin explicitly.");
       const confirmed = await call({
         action: "connected",
         route: prepared.route?.id,
@@ -356,11 +372,17 @@ export default function MonitoringProbe() {
       );
     } catch (error) {
       localStop();
+      if (
+        !(error instanceof Error) ||
+        !error.message.startsWith("Room unavailable:")
+      )
+        stopScan();
       setMessage(error instanceof Error ? error.message : "Transfer failed.");
       try {
         if (ownedRevision !== undefined)
           update(await call({ action: "stop", revision: ownedRevision }));
       } catch {
+        stopScan();
         /* Keep server's failed closure and notice for Retry Stop. */
       }
     } finally {

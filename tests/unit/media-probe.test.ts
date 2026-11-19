@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { authorizeProbe, probeEnabled } from "../../lib/media-probe";
 import { POST } from "../../app/api/probe/grant/route";
+import { probeRequest } from "../../lib/probe-request";
 
 const credential = "a".repeat(64);
 const assignment = {
@@ -15,6 +16,41 @@ const fixture = { expiresAt: 2000, assignments: [assignment] };
 afterEach(() => vi.unstubAllEnvs());
 
 describe("P1-01 scoped fixture authorization", () => {
+  it("reports unexpected failures without exposing messages, paths or credentials", async () => {
+    vi.stubEnv("MEDIA_PROBE_ENABLED", "1");
+    vi.stubEnv("VERCEL", "");
+    vi.stubEnv("MEDIA_PROBE_ORIGIN", "https://example.test");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const code of ["EPERM", "private_fixture_value"]) {
+        const result = await probeRequest(
+          new Request("https://example.test/api/probe/monitor", {
+            method: "POST",
+            headers: {
+              origin: "https://example.test",
+              "content-type": "application/json",
+            },
+            body: "{}",
+          }),
+          async () => {
+            throw Object.assign(new Error("private_fixture_value"), {
+              code,
+              syscall: "rename",
+              path: "private_fixture_value",
+            });
+          }
+        );
+        expect(result.status).toBe(503);
+        expect(await result.text()).not.toContain("private_fixture_value");
+        expect(log).toHaveBeenLastCalledWith("Local probe operation failed", {
+          code: code === "EPERM" ? code : "unknown",
+          operation: "rename",
+        });
+      }
+    } finally {
+      log.mockRestore();
+    }
+  });
   it("derives identity server-side and rejects another session/room, invalid or expired invitation", () => {
     expect(
       authorizeProbe(

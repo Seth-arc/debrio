@@ -86,7 +86,8 @@ async function demoPause(page: Page) {
 async function holdReply(
   page: Page,
   action: string,
-  matches: (value: MonitorView) => boolean = () => true
+  matches: (value: MonitorView) => boolean = () => true,
+  status = 200
 ) {
   let release!: () => void;
   let captured!: (value: MonitorView) => void;
@@ -107,7 +108,7 @@ async function holdReply(
       captured(data);
       await gate;
     }
-    await route.fulfill({ response });
+    await route.fulfill({ response, status });
   });
   return { value, release };
 }
@@ -354,6 +355,9 @@ test("P1-02 monitor demo: notices, scoped tracks, switching, save and failed cle
   await expect(page.getByTestId("media-state")).toContainText("Media stopped");
   const stopUiObservedMs = Date.now() - stopStarted;
   await locallyClosed(page);
+  await expect(page.getByTestId("connection-status")).toHaveText(
+    "Stopped. Rejoin explicitly to transmit again."
+  );
   await demoPause(page);
   await page
     .getByRole("combobox", { name: "Target room", exact: true })
@@ -410,6 +414,9 @@ test("P1-02 monitor demo: notices, scoped tracks, switching, save and failed cle
     .toBeGreaterThan(6);
   await page.getByRole("button", { name: "Pause scan" }).click();
   await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
+  await expect(page.getByTestId("connection-status")).toHaveText(
+    "Stopped. Rejoin explicitly to transmit again."
+  );
   await page.getByRole("button", { name: "Listen", exact: true }).click();
   await expect(page.getByTestId("connection-status")).toContainText(
     "Listening"
@@ -664,6 +671,145 @@ test("P1-02 AC2: an obsolete failed poll cannot stop a recovered route", async (
   );
   await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
   await locallyClosed(page);
+});
+
+test("P1-02 AC2: a rejected obsolete poll cannot stop a newer route", async ({
+  page,
+  browser,
+}) => {
+  const one = await peerPage(browser);
+  await participant(one, "breakout-1-1");
+  await enter(page, invite("facilitator"));
+  await page.getByRole("button", { name: "Listen", exact: true }).click();
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Listening:"
+  );
+  const held = await holdReply(page, "read", () => true, 503);
+  await held.value;
+  await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
+  await expect(page.getByTestId("connection-status")).toHaveText(
+    "Stopped. Rejoin explicitly to transmit again."
+  );
+  await page.getByRole("button", { name: "Speak", exact: true }).click();
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Speaking:"
+  );
+  const received = page.waitForResponse(
+    (response) => response.status() === 503
+  );
+  held.release();
+  await received;
+  await flowing(page, "outbound-rtp");
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Speaking:"
+  );
+  await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
+  await locallyClosed(page);
+});
+
+test("P1-02 AC2: an old Stop reply cannot report a newer speaking route as stopped", async ({
+  page,
+  browser,
+}) => {
+  const one = await peerPage(browser);
+  await participant(one, "breakout-1-1");
+  await enter(page, invite("facilitator"));
+  await page.getByRole("button", { name: "Listen", exact: true }).click();
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Listening:"
+  );
+  const held = await holdReply(page, "stop");
+  await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
+  await held.value;
+  await expect(one.getByTestId("notice")).toHaveText(
+    "No active facilitator route."
+  );
+  await expect(page.getByTestId("notice")).toHaveText(
+    "No active facilitator route."
+  );
+  await page.getByRole("button", { name: "Speak", exact: true }).click();
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Speaking:"
+  );
+  const received = page.waitForResponse(
+    (response) => response.request().postDataJSON()?.action === "stop"
+  );
+  held.release();
+  await received;
+  await flowing(page, "outbound-rtp");
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Speaking:"
+  );
+  await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
+  await locallyClosed(page);
+});
+
+test("P1-02 AC2: a superseded tab never connects its delayed grant", async ({
+  page,
+  browser,
+}) => {
+  const one = await peerPage(browser);
+  const newer = await peerPage(browser);
+  await participant(one, "breakout-1-1");
+  await enter(page, invite("facilitator"));
+  const held = await holdReply(page, "grant");
+  await page.getByRole("button", { name: "Speak", exact: true }).click();
+  const old = await held.value;
+  await enter(newer, invite("facilitator"));
+  await newer.getByRole("button", { name: "Speak", exact: true }).click();
+  await expect(newer.getByTestId("connection-status")).toContainText(
+    "Speaking:"
+  );
+  await expect(page.getByTestId("notice")).toContainText("active");
+  const received = page.waitForResponse(
+    (response) => response.request().postDataJSON()?.action === "grant"
+  );
+  held.release();
+  await received;
+  await expect(
+    page.getByRole("button", { name: "Speak", exact: true })
+  ).toBeEnabled();
+  await locallyClosed(page);
+  expect(await page.evaluate(() => window.monitorMedia.peers.length)).toBe(0);
+  expect(
+    (await provider.listParticipants(invite("breakout-1-1").providerRoom)).some(
+      (p) => p.identity === old.route?.identity
+    )
+  ).toBe(false);
+  await flowing(newer, "outbound-rtp");
+  await newer.getByRole("button", { name: "Stop / Retry Stop" }).click();
+});
+
+test("P1-02 AC3: Scan pauses after a failed transfer until an explicit restart", async ({
+  page,
+  browser,
+}) => {
+  const one = await peerPage(browser);
+  await participant(one, "breakout-1-1");
+  await enter(page, invite("facilitator"));
+  await page.getByRole("button", { name: "Listen", exact: true }).click();
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Listening:"
+  );
+  await page.route("**/api/probe/monitor", async (route) => {
+    if (route.request().postDataJSON()?.action !== "request")
+      return route.continue();
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Provider cleanup unconfirmed." }),
+    });
+  });
+  await page.getByLabel("Scan dwell (seconds)").fill("1");
+  await page.getByRole("button", { name: "Scan", exact: true }).click();
+  await expect(page.getByText("Scan paused", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("connection-status")).toContainText(
+    "Provider cleanup unconfirmed."
+  );
+  await locallyClosed(page);
+  await page.unroute("**/api/probe/monitor");
+  await expect(page.getByRole("button", { name: "Pause scan" })).toBeDisabled();
+  await page.getByRole("button", { name: "Stop / Retry Stop" }).click();
 });
 
 test("P1-02 AC1: an already-issued participant grant cannot play intervention before notice acknowledgement", async ({

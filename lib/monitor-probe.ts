@@ -1,4 +1,5 @@
 import { open, readFile, rename } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   AccessToken,
   RoomServiceClient,
@@ -80,8 +81,21 @@ export async function writeMonitorState(path: string, state: MonitorState) {
   } finally {
     await file.close();
   }
-  // eslint-disable-next-line security/detect-non-literal-fs-filename -- same internal fixture path
-  await rename(`${path}.tmp`, path);
+  // Retry brief Windows replacement locks without deleting the prior committed file.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- same internal fixture path
+      await rename(`${path}.tmp`, path);
+      return;
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? error.code
+          : undefined;
+      if (attempt === 3 || (code !== "EPERM" && code !== "EBUSY")) throw error;
+      await delay(25 * (attempt + 1));
+    }
+  }
 }
 
 // shortcut: one loopback process owns this disposable fixture; use database transactions before multi-process use.

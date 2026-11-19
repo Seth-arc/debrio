@@ -50,6 +50,26 @@ export async function probeRequest(
       ? new Response(null, { status: 403, headers })
       : Response.json(result, { headers });
   } catch (error) {
+    if (!(error instanceof ProbeError)) {
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? error.code
+          : "unknown";
+      console.error("Local probe operation failed", {
+        code:
+          typeof code === "string" &&
+          ["EPERM", "EBUSY", "ENOENT", "EIO"].includes(code)
+            ? code
+            : "unknown",
+        operation:
+          error &&
+          typeof error === "object" &&
+          "syscall" in error &&
+          ["rename", "open", "read", "write"].includes(String(error.syscall))
+            ? error.syscall
+            : "unknown",
+      });
+    }
     return Response.json(
       {
         error:
