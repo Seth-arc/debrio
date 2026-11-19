@@ -1,6 +1,6 @@
 # Debrio
 
-Minimal Next.js application foundation with an opt-in synthetic LiveKit media probe. Production accounts, workshops and media authorization are not implemented.
+Next.js application with host sign-in (email + password plus an authenticator app) and a personal workspace, backed by Supabase, plus an opt-in synthetic LiveKit media probe. Workshops, guests, password reset and media authorization are not implemented yet.
 
 ## Run locally
 
@@ -8,10 +8,12 @@ Use Node **24.22.1**, npm **11.19.1**, Git and Docker Desktop (Linux containers)
 
 ```sh
 npm ci --include=dev
+npm run db:start
+node scripts/local-supabase.ts > .env.development.local
 npm run dev
 ```
 
-Open http://127.0.0.1:3000. Stop with Ctrl+C. Leave `NODE_ENV` unset so Next.js selects development/production for each command (PowerShell: `Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue`). `.env.example` lists optional non-secret configuration; copying it to `.env.local` is optional. `GET /api/health` returns `{"status":"ok"}` with `Cache-Control: no-store`. This is application liveness, not database/provider readiness. Other HTTP write methods return 405.
+`db:start` runs the disposable local Supabase stack (database, Auth, REST API and a mail catcher) and applies `supabase/migrations`. The last-but-one line writes the local Auth URL and public key for `npm run dev`; it contains no hosted value. Open http://127.0.0.1:3000 and create an account; confirmation emails appear in the local mail catcher at http://127.0.0.1:39324. Use any authenticator app (TOTP) for the second step. Without `SUPABASE_URL`/`SUPABASE_ANON_KEY`, the sign-in pages say sign-in isn't available. Stop with Ctrl+C. Leave `NODE_ENV` unset so Next.js selects development/production for each command (PowerShell: `Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue`). `.env.example` lists optional non-secret configuration; copying it to `.env.local` is optional. `GET /api/health` returns `{"status":"ok"}` with `Cache-Control: no-store`. This is application liveness, not database/provider readiness. Other HTTP write methods return 405.
 
 ## Verify
 
@@ -22,6 +24,7 @@ npm test
 npm run db:start
 npm run db:reset
 npm run test:db
+npm run test:integration
 npm run build
 npx playwright install chromium
 npm run test:browser
@@ -29,9 +32,9 @@ npm run db:stop
 npm run security:dependencies
 ```
 
-`check` runs formatting, ESLint (including security rules), strict TypeScript and focused unit tests. `test:guards` temporarily breaks the health response, requires the unit test to fail, and restores the exact source in `finally`; run it in an idle checkout, not during editing. The following `npm test` verifies recovery. Browser tests start and stop the production server on loopback port 3100 themselves; they check keyboard navigation, accessibility, layout, console/network errors, health and rejected writes. CI installs Chromium's Linux system dependencies too.
+`check` runs formatting, ESLint (including security rules), strict TypeScript and focused unit tests. `test:guards` temporarily breaks the health response, requires the unit test to fail, and restores the exact source in `finally`; run it in an idle checkout, not during editing. The following `npm test` verifies recovery. Browser tests start and stop the production server on loopback port 3100 themselves; they check keyboard navigation, accessibility, layout, console/network errors, health, rejected writes and the full sign-up → authenticator → workspace → sign-out → sign-in journey. Sign-in browser tests and `test:integration` need `npm run db:start` first. `test:integration` exercises real Auth tokens against the database policies: no MFA, other owners, forged owners/tokens and signed-out sessions are denied. CI installs Chromium's Linux system dependencies too.
 
-`db:start` runs only a disposable Supabase PostgreSQL instance bound to `127.0.0.1`. The published password in `compose.yaml` belongs only to this disposable local database, never to a hosted project. `db:reset` **erases this local database** and rebuilds the pinned image's Supabase platform schema. There are no application migrations yet; add and exercise their apply procedure when the first product schema is introduced. pgTAP checks the real Supabase test harness, not future application permissions. `db:stop` stops this project's containers and removes its disposable data. Don't run two checkouts' database commands simultaneously: both use Compose project `debrio-foundation` and port 54322. Hosted project versions/configuration must be verified before hosted migrations.
+`db:start` runs the disposable local stack from `compose.yaml`: Supabase PostgreSQL, Auth (GoTrue), PostgREST, a loopback-only gateway at `127.0.0.1:39321` and Mailpit at `127.0.0.1:39324`, using the Supabase CLI v3.2.0 image versions pinned by digest. Every port binds to `127.0.0.1`; ports sit below Windows' dynamic range, which can reserve the usual 543xx ports. The passwords and JWT secret in `compose.yaml` and `scripts/local-supabase.ts` belong only to this disposable stack, never to a hosted project. `db:start` then runs `scripts/db-migrate.mjs`, which applies each `supabase/migrations/<timestamp>_<title>.sql` once (each needs a `-- Title:` first line) and records it in `supabase_migrations.schema_migrations`. `db:reset` **erases all local data** and rebuilds. `db:stop` stops this project's containers and removes its disposable data. Don't run two checkouts' stacks simultaneously: both use Compose project `debrio-foundation` and the same ports. Hosted project versions/configuration must be verified before hosted migrations.
 
 To reset generated application state, stop the app and run `npm run clean`, then `npm ci --include=dev` and `npm run build`. To exercise production manually:
 
@@ -47,7 +50,7 @@ Open the same local URL and stop with Ctrl+C. Local hooks format staged files, t
 - Framework preset: **Next.js**; root directory: **.**
 - Node.js: **24.x**; install: `npm ci --include=dev`; build: `npm run build`.
 - Output directory: leave the framework default override **off**. Do not set `out`.
-- Required environment variables for this foundation: **none**. Optional: `NEXT_TELEMETRY_DISABLED=1`.
+- Environment variables: `SUPABASE_URL` and `SUPABASE_ANON_KEY` (server-only; never `NEXT_PUBLIC_*`) enable sign-in. Without them the app runs and sign-in pages say sign-in is unavailable. Optional: `NEXT_TELEMETRY_DISABLED=1`. Hosted Auth settings (email confirmation, 12-character minimum password, TOTP MFA, redirect allow-list, SMTP and rate limits) must match before use; none are configured by this repository.
 - Keep the media probe disabled on Vercel; its routes return 404 there. `NEXT_PUBLIC_*` values are browser-visible and must never contain administrative secrets.
 
 These are configuration instructions, not a deployment receipt. Hosted providers, capacity, billing and media remain unverified.
