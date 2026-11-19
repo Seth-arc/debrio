@@ -1,17 +1,67 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, open, writeFile, rm } from "node:fs/promises";
+import { mkdir, open, readFile, writeFile, rm } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import { RoomServiceClient } from "livekit-server-sdk";
+import { parseEnv } from "node:util";
+import { phoneProxy } from "../lib/probe-phone.ts";
+import {
+  probeProviderAllowed,
+  revocationCutoff,
+} from "../lib/probe-provider.ts";
 
 const directory = ".artifacts/media-probe";
 const monitoring = process.argv.includes("--monitor");
-const existing = spawnSync(
-  "docker",
-  ["compose", "-f", "compose.media-probe.yaml", "ps", "--all", "--quiet"],
-  { encoding: "utf8" }
-);
+const cloudIndex = process.argv.indexOf("--cloud");
+const cloud = cloudIndex !== -1;
+const check = process.argv.includes("--check");
+const phoneIndex = process.argv.indexOf("--phone");
+const phone = phoneIndex !== -1;
+if (phone && (!cloud || process.argv.includes("--test")))
+  throw new Error("Phone access requires an interactive Cloud monitoring run.");
+let cloudConfig;
+if (cloud) {
+  if (!monitoring || process.env.CI || process.env.VERCEL)
+    throw new Error("Cloud qualification requires a local monitoring run.");
+  const path = process.argv[cloudIndex + 1];
+  if (!path || path.startsWith("--"))
+    throw new Error("Pass an ignored environment file after --cloud.");
+  // Explicit operator-selected local file; consume only the three LiveKit fields.
+  // eslint-disable-next-line security/detect-non-literal-fs-filename
+  const config = parseEnv(await readFile(path, "utf8"));
+  if (
+    !probeProviderAllowed(
+      config.LIVEKIT_URL,
+      true,
+      check || process.env.LIVEKIT_PROBE_CONFIRMED === "1",
+      false
+    ) ||
+    !config.LIVEKIT_API_KEY ||
+    !config.LIVEKIT_API_SECRET
+  )
+    throw new Error(
+      "Cloud setup requires valid credentials and operator confirmation of allowance/no agents; no egress is configured by this runner."
+    );
+  cloudConfig = {
+    LIVEKIT_URL: config.LIVEKIT_URL,
+    LIVEKIT_API_KEY: config.LIVEKIT_API_KEY,
+    LIVEKIT_API_SECRET: config.LIVEKIT_API_SECRET,
+  };
+  if (check) {
+    console.log(
+      "LiveKit Cloud configuration valid. No hosted calls made. Maximum 180 participant-minutes per ten-minute run; no egress/agents requested."
+    );
+    process.exit(0);
+  }
+}
+const existing = cloud
+  ? { status: 0, stdout: "" }
+  : spawnSync(
+      "docker",
+      ["compose", "-f", "compose.media-probe.yaml", "ps", "--all", "--quiet"],
+      { encoding: "utf8" }
+    );
 if (existing.error || existing.status !== 0)
   throw new Error("Docker is unavailable");
 if (existing.stdout.trim())
@@ -19,7 +69,6 @@ if (existing.stdout.trim())
     "A media probe container already exists. Stop its owning run before starting another."
   );
 await mkdir(directory, { recursive: true });
-const lock = await open(`${directory}/run.lock`, "wx");
 const started = Date.now();
 const expiresAt = started + 10 * 60_000;
 const runId = `p101-${randomBytes(8).toString("hex")}`;
@@ -56,6 +105,8 @@ const env = {
   LIVEKIT_URL: "ws://127.0.0.1:7880",
   LIVEKIT_API_KEY: "probe-local",
   LIVEKIT_API_SECRET: "synthetic-local-fixture-not-a-cloud-key",
+  ...cloudConfig,
+  MEDIA_PROBE_CLOUD: cloud ? "1" : "0",
 };
 const client = new RoomServiceClient(
   env.LIVEKIT_URL,
@@ -64,11 +115,18 @@ const client = new RoomServiceClient(
   { requestTimeout: 3, failover: false }
 );
 let child;
+let tunnel;
+let proxy;
 let timer;
 let interrupted = false;
 const interrupt = () => {
   interrupted = true;
-  child?.kill();
+  if (child && process.platform === "win32")
+    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+    });
+  else child?.kill();
+  tunnel?.kill();
 };
 process.on("SIGINT", interrupt);
 process.on("SIGTERM", interrupt);
@@ -81,6 +139,23 @@ function compose(...args) {
   if (result.error || result.status !== 0)
     throw new Error("Local probe Docker operation failed");
 }
+if (cloud) {
+  const oldLedger = await readFile(`${directory}/issued.jsonl`, "utf8").catch(
+    (error) => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    }
+  );
+  if (oldLedger.trim())
+    throw new Error(
+      "Previous Cloud issued-identity ledger remains; resolve its cleanup before starting."
+    );
+  if ((await client.listRooms([])).length)
+    throw new Error(
+      "Cloud project is not idle; stop before using a shared project."
+    );
+}
+const lock = await open(`${directory}/run.lock`, "wx");
 try {
   await writeFile(
     `${directory}/invitations.json`,
@@ -158,7 +233,7 @@ try {
       { mode: 0o600 }
     );
   }
-  compose("up", "-d", "media");
+  if (!cloud) compose("up", "-d", "media");
   let available = false;
   for (let attempt = 0; attempt < 30 && !interrupted; attempt++) {
     try {
@@ -182,13 +257,62 @@ try {
   }
   if (interrupted) throw new Error("Probe interrupted before launch");
   const testing = process.argv.includes("--test");
+  if (phone) {
+    const executable = process.argv[phoneIndex + 1];
+    if (!executable || executable.startsWith("--"))
+      throw new Error(
+        "Pass the verified cloudflared executable after --phone."
+      );
+    let publicOrigin = "";
+    proxy = phoneProxy(() => publicOrigin, expiresAt);
+    proxy.listen(3102, "127.0.0.1");
+    await once(proxy, "listening");
+    tunnel = spawn(
+      executable,
+      ["tunnel", "--url", "http://127.0.0.1:3102", "--no-autoupdate"],
+      { stdio: ["ignore", "ignore", "pipe"] }
+    );
+    publicOrigin = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Temporary HTTPS endpoint unavailable")),
+        30000
+      );
+      let log = "";
+      tunnel.stderr.on("data", (chunk) => {
+        log = (log + chunk.toString()).slice(-8000);
+        const found = log.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+        if (found) {
+          clearTimeout(timeout);
+          resolve(found[0]);
+        }
+      });
+      tunnel.once("error", () => {
+        clearTimeout(timeout);
+        reject(new Error("Tunnel executable unavailable"));
+      });
+      tunnel.once("exit", () => {
+        clearTimeout(timeout);
+        reject(new Error("Temporary HTTPS endpoint closed"));
+        interrupt();
+      });
+    });
+    env.MEDIA_PROBE_ORIGIN = publicOrigin;
+    await writeFile(
+      `${directory}/phone.json`,
+      JSON.stringify({ url: `${publicOrigin}/probe/monitor`, expiresAt }),
+      { mode: 0o600 }
+    );
+    console.log(
+      `Private phone URL saved in ${directory}/phone.json. Use that HTTPS URL on both devices; no physical audio is recorded.`
+    );
+  }
   console.log(
-    `Synthetic local run ${runId}; expires ${new Date(expiresAt).toISOString()}. Cloud usage: zero.`
+    `Synthetic ${cloud ? "Cloud" : "local"} run ${runId}; expires ${new Date(expiresAt).toISOString()}. ${cloud ? "Bound: 180 participant-minutes; no egress/agent requested." : "Cloud usage: zero."}`
   );
   console.log(
     `Private invitations: ${directory}/${monitoring ? "monitor-invitations" : "invitations"}.json (do not publish).`
   );
-  if (!testing)
+  if (!testing && !phone)
     console.log(
       `Open http://127.0.0.1:3101/probe/${monitoring ? "monitor" : "media"}; Ctrl+C ends this run and removes its rooms.`
     );
@@ -200,9 +324,14 @@ try {
           "test",
           "--config=playwright.media.config.ts",
           ...(monitoring ? ["monitor.spec.ts"] : ["rooms.spec.ts"]),
-          ...(process.env.PROBE_RECORD === "1"
-            ? ["--grep", monitoring ? "monitor demo" : "denied devices recover"]
-            : []),
+          ...(cloud
+            ? ["--grep", "Cloud qualification"]
+            : process.env.PROBE_RECORD === "1"
+              ? [
+                  "--grep",
+                  monitoring ? "monitor demo" : "denied devices recover",
+                ]
+              : []),
         ]
       : [
           "node_modules/next/dist/bin/next",
@@ -222,9 +351,46 @@ try {
   process.removeListener("SIGINT", interrupt);
   process.removeListener("SIGTERM", interrupt);
   clearTimeout(timer);
-  child?.kill();
+  tunnel?.kill();
+  proxy?.closeAllConnections();
+  if (proxy) await new Promise((resolve) => proxy.close(resolve));
+  if (child && child.exitCode === null && child.signalCode === null) {
+    const exited = once(child, "exit");
+    if (process.platform === "win32")
+      spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+      });
+    else child.kill();
+    await exited;
+  }
   const removed = [];
+  const revoked = [];
   let cleanupError = false;
+  if (cloud) {
+    try {
+      const ledger = await readFile(`${directory}/issued.jsonl`, "utf8").catch(
+        (error) => {
+          if (error.code === "ENOENT") return "";
+          throw error;
+        }
+      );
+      for (const row of new Set(ledger.trim().split("\n").filter(Boolean))) {
+        const entry = JSON.parse(row);
+        if (!rooms.includes(entry.room) || typeof entry.identity !== "string")
+          throw new Error("Invalid owned identity ledger");
+        try {
+          await client.removeParticipant(entry.room, entry.identity, {
+            revokeTokenTs: revocationCutoff(),
+          });
+          revoked.push(entry);
+        } catch {
+          cleanupError = true;
+        }
+      }
+    } catch {
+      cleanupError = true;
+    }
+  }
   for (const name of rooms) {
     try {
       await client.deleteRoom(name);
@@ -240,7 +406,7 @@ try {
     cleanupError = true;
   }
   try {
-    compose("down");
+    if (!cloud) compose("down");
   } catch {
     cleanupError = true;
   }
@@ -254,13 +420,21 @@ try {
         expiresAt,
         rooms,
         removed,
+        revoked,
         remaining,
         cleanupError,
-        cloudUsage: 0,
-        server: "1.13.11",
-        mode: monitoring
-          ? "P1-02 local monitoring fixture; hosted revocation/replay and physical-device proof excluded"
-          : "P1-01 local fixture; Cloud/device proof excluded",
+        cloudUsage: cloud
+          ? "See qualification RTP/elapsed receipt; dashboard billing remains separate"
+          : 0,
+        maximumParticipantMinutes: cloud ? 180 : 0,
+        server: cloud
+          ? "LiveKit Cloud; reported server version in qualification receipt"
+          : "1.13.11",
+        mode: cloud
+          ? "P1-02 bounded Cloud qualification; physical audio requires separate observation"
+          : monitoring
+            ? "P1-02 local monitoring fixture; hosted revocation/replay and physical-device proof excluded"
+            : "P1-01 local fixture; Cloud/device proof excluded",
       },
       null,
       2
@@ -272,7 +446,10 @@ try {
     await rm(`${directory}/camera.y4m`, { force: true });
     await rm(`${directory}/monitor-invitations.json`, { force: true });
     await rm(`${directory}/monitor-fixture.json`, { force: true });
+    await rm(`${directory}/phone.json`, { force: true });
   }
+  if (cloud && !cleanupError && !remaining?.length)
+    await rm(`${directory}/issued.jsonl`, { force: true });
   await lock.close();
   await rm(`${directory}/run.lock`);
   if (cleanupError || remaining?.length) {
@@ -282,6 +459,6 @@ try {
     process.exitCode = 1;
   } else
     console.log(
-      "All task rooms deleted; local SFU stopped. Receipt: .artifacts/media-probe/receipt.json"
+      `All task rooms deleted; ${cloud ? "issued identities revoked" : "local SFU stopped"}. Receipt: .artifacts/media-probe/receipt.json`
     );
 }

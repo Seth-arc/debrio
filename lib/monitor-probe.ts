@@ -1,4 +1,5 @@
 import { open, readFile, rename } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   AccessToken,
@@ -11,6 +12,7 @@ import {
   type ProbeFixture,
 } from "./media-probe";
 import { ProbeError } from "./probe-request";
+import { probeProviderAllowed, revocationCutoff } from "./probe-provider";
 
 export type Mode = "listen" | "speak" | "join";
 type Actor = Assignment & {
@@ -48,6 +50,7 @@ export type MonitorView = {
   name: string;
   role: Actor["role"];
   rooms: string[];
+  peers: string[];
   assignedRoom: string;
   revoked: boolean;
   controlFailure: boolean;
@@ -105,7 +108,8 @@ export class MonitorProbe {
     private state: MonitorState,
     private provider: Provider,
     private persist: (state: MonitorState) => Promise<void>,
-    private sign: (actor: Actor, route: Route | null) => Promise<unknown>
+    private sign: (actor: Actor, route: Route | null) => Promise<unknown>,
+    private cloud = false
   ) {}
 
   private async event(kind: string) {
@@ -132,11 +136,21 @@ export class MonitorProbe {
       const participants = await this.provider.listParticipants(
         route.providerRoom
       );
-      if (participants.some((p) => p.identity === route.identity))
-        await this.provider.removeParticipant(
-          route.providerRoom,
-          route.identity
-        );
+      if (
+        this.cloud ||
+        participants.some((p) => p.identity === route.identity)
+      ) {
+        try {
+          await this.provider.removeParticipant(
+            route.providerRoom,
+            route.identity,
+            this.cloud ? { revokeTokenTs: revocationCutoff() } : undefined
+          );
+        } catch (error) {
+          // A local peer can leave between list/remove; Cloud must still confirm token revocation.
+          if (this.cloud) throw error;
+        }
+      }
       if (
         (await this.provider.listParticipants(route.providerRoom)).some(
           (p) => p.identity === route.identity
@@ -220,6 +234,12 @@ export class MonitorProbe {
       identity: actor.identity,
       name: actor.name,
       role: actor.role,
+      peers: this.fixture.assignments
+        .filter(
+          (a) =>
+            a.role === "participant" && a.providerRoom === actor.providerRoom
+        )
+        .map((a) => a.identity),
       rooms: [
         ...new Set(
           this.fixture.assignments
@@ -336,7 +356,7 @@ export class MonitorProbe {
         id: ++this.state.next,
         room: target.room,
         providerRoom: target.providerRoom,
-        identity: `monitor-${this.state.next}`,
+        identity: `monitor-${this.state.next}-${randomUUID()}`,
         mode: request.mode as Mode,
         phase: "notice",
         required,
@@ -442,8 +462,19 @@ export class MonitorProbe {
 let pending: Promise<unknown> = Promise.resolve();
 export function handleMonitor(input: unknown): Promise<unknown> {
   const run = pending.then(async () => {
-    if (process.env.LIVEKIT_URL !== "ws://127.0.0.1:7880")
-      throw new ProbeError(503, "This prototype only permits the local SFU.");
+    const cloud = process.env.MEDIA_PROBE_CLOUD === "1";
+    if (
+      !probeProviderAllowed(
+        process.env.LIVEKIT_URL,
+        cloud,
+        process.env.LIVEKIT_PROBE_CONFIRMED === "1",
+        !!process.env.CI || !!process.env.VERCEL
+      )
+    )
+      throw new ProbeError(
+        503,
+        "Provider is not authorized for this probe run."
+      );
     const fixture: MonitorFixture = JSON.parse(
       await readFile(".artifacts/media-probe/monitor-fixture.json", "utf8")
     );
@@ -454,7 +485,7 @@ export function handleMonitor(input: unknown): Promise<unknown> {
     if (!key || !secret)
       throw new ProbeError(503, "Missing local provider configuration.");
     const provider = new RoomServiceClient(
-      process.env.LIVEKIT_URL,
+      process.env.LIVEKIT_URL!,
       key,
       secret,
       { requestTimeout: 2, failover: false }
@@ -494,13 +525,32 @@ export function handleMonitor(input: unknown): Promise<unknown> {
           roomList: false,
           roomRecord: false,
         });
+        if (cloud) {
+          const ledger = await open(
+            ".artifacts/media-probe/issued.jsonl",
+            "a",
+            0o600
+          );
+          try {
+            await ledger.writeFile(
+              JSON.stringify({
+                room: route?.providerRoom ?? actor.providerRoom,
+                identity: route?.identity ?? actor.identity,
+              }) + "\n"
+            );
+            await ledger.sync();
+          } finally {
+            await ledger.close();
+          }
+        }
         return {
           token: await token.toJwt(),
           url: process.env.LIVEKIT_URL,
           identity: route?.identity ?? actor.identity,
           room: route?.room ?? actor.room,
         };
-      }
+      },
+      cloud
     ).handle(input);
   });
   pending = run.catch(() => {});
