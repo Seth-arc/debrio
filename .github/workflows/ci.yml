@@ -28,6 +28,16 @@ jobs:
       - run: npm run check
       - run: npm run test:guards
       - run: npm test
+      - name: Pull local stack images one at a time
+        # Public registries throttle bursts of anonymous parallel pulls.
+        env:
+          COMPOSE_PARALLEL_LIMIT: "1"
+        run: |
+          for attempt in 1 2 3; do
+            docker compose --profile test pull && exit 0
+            sleep $((attempt * 15))
+          done
+          exit 1
       - run: npm run db:start
       - run: npm run db:reset
       - run: npm run test:db
