@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import {
+  createClient,
   isAuthRetryableFetchError,
   type SupabaseClient,
   type User,
@@ -39,6 +40,17 @@ export async function serverSupabase() {
       },
     },
   });
+}
+
+// Guests have no account: they call the narrow guest functions as anon,
+// identified only by their join key or credential hash.
+export function guestSupabase() {
+  const config = supabaseConfig();
+  return config
+    ? createClient(config.url, config.key, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      })
+    : null;
 }
 
 export type Host =
