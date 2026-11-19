@@ -7,6 +7,7 @@ import {
   freshCode,
   ownerWithWorkspace,
   signIn,
+  signUp,
 } from "../support/browser";
 import {
   confirmationLink,
@@ -74,10 +75,42 @@ test("a host resets a forgotten password with email plus authenticator, ending o
   );
   await page.getByLabel("Password").fill(NEW_PASSWORD);
   await page.getByLabel("Password").press("Enter");
+  await page.getByLabel("6-digit code").fill(await freshCode(secret));
+  await page.getByLabel("6-digit code").press("Enter");
   await expect(
-    page.getByRole("heading", { name: "Enter your authenticator code" })
+    page.getByRole("heading", { name: "Synthetic Practice" })
   ).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("a reset link opened in another browser signs nobody in", async ({
+  browser,
+  page,
+}) => {
+  const email = syntheticEmail();
+  await signUp(page, email);
+  // Signing up again at once hits Auth's per-address limit; the answer must not differ.
+  await signUp(page, email);
+  await fetch(await confirmationLink(email), { redirect: "manual" });
+  // Twice in a row, so the second request hits the same per-address limit.
+  for (const attempt of [1, 2]) {
+    await page.goto("/forgot-password");
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Email").press("Enter");
+    await expect(
+      page.getByRole("heading", { name: "Check your email" }),
+      `reset request ${attempt}`
+    ).toBeVisible();
+  }
+
+  // The other browser has no reset verifier, so no session is created there.
+  const elsewhere = await browser.newContext();
+  const other = await elsewhere.newPage();
+  await other.goto(await confirmationLink(email));
+  await expect(other).toHaveURL(CONFIRM_FAILED);
+  await other.goto("/account");
+  await expect(other).toHaveURL("/sign-in");
+  await elsewhere.close();
 });
 
 test("an owner's email changes only after both addresses confirm", async ({

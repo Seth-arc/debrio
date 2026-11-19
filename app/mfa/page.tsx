@@ -44,7 +44,10 @@ export default async function Mfa({
             signing in. This protects your workshops and participants&apos; work
             if your password is ever exposed.
           </p>
-          <EnrollAuthenticator start="Set up authenticator" />
+          <EnrollAuthenticator
+            start="Set up authenticator"
+            next={next ?? undefined}
+          />
         </>
       )}
       <form action={signOut}>

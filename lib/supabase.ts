@@ -60,6 +60,19 @@ export const hasFreshCode = (
   nowSeconds = Date.now() / 1000
 ) => codeVerifiedAt !== null && nowSeconds - codeVerifiedAt < 600;
 
+// Latest authenticator-code time in a session's methods (amr). Older tokens
+// list methods as bare strings, which carry no time.
+export function latestCodeTime(
+  methods: (string | { method: string; timestamp: number })[]
+) {
+  const times = methods.flatMap((entry) =>
+    typeof entry === "object" && entry.method === "totp"
+      ? [entry.timestamp]
+      : []
+  );
+  return times.length > 0 ? Math.max(...times) : null;
+}
+
 // The Auth server verifies the session on every call; cookies alone are not trusted.
 export async function currentHost(): Promise<Host> {
   const supabase = await serverSupabase();
@@ -75,19 +88,12 @@ export async function currentHost(): Promise<Host> {
         status === "verified" && factor_type === "totp"
     )
     .map(({ id }) => id);
-  // Older tokens list methods as bare strings, which carry no time.
-  const codeTimes = (level?.currentAuthenticationMethods ?? []).flatMap(
-    (entry) =>
-      typeof entry === "object" && entry.method === "totp"
-        ? [entry.timestamp]
-        : []
-  );
   return {
     state: level?.currentLevel === "aal2" ? "aal2" : "aal1",
     supabase,
     user: data.user,
     verifiedFactorIds,
-    codeVerifiedAt: codeTimes.length > 0 ? Math.max(...codeTimes) : null,
+    codeVerifiedAt: latestCodeTime(level?.currentAuthenticationMethods ?? []),
   };
 }
 

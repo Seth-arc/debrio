@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { signUp } from "../auth/actions";
 import { supabaseConfig } from "../../lib/supabase";
-import { Form } from "../form";
+import { Form, NEW_PASSWORD_RULE } from "../form";
 import { HostProblem } from "../host-problem";
 
 // Identity is per request; never prerender.
@@ -45,15 +45,7 @@ export default async function SignUp({
             type: "email",
             autoComplete: "email",
           },
-          {
-            name: "password",
-            label: "Password",
-            type: "password",
-            autoComplete: "new-password",
-            minLength: 12,
-            maxLength: 72,
-            hint: "12 to 72 characters; accented letters and symbols count as more than one. A passphrase works well.",
-          },
+          { name: "password", label: "Password", ...NEW_PASSWORD_RULE },
         ]}
       />
       <p>

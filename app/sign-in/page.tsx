@@ -17,7 +17,7 @@ export default async function SignIn({
 }) {
   if (!supabaseConfig()) return <HostProblem state="unconfigured" />;
   const { confirm, email } = await searchParams;
-  const notice = emailNotice(email);
+  const notice = emailNotice(email, "signed-out");
   return (
     <main>
       <p className="wordmark">Debrio</p>

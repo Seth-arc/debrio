@@ -4,6 +4,15 @@ import { startTransition, useActionState, useId } from "react";
 
 export type FormState = { error?: string } | null;
 
+// Auth hashes at most 72 bytes; the server re-checks this rule.
+export const NEW_PASSWORD_RULE = {
+  type: "password",
+  autoComplete: "new-password",
+  minLength: 12,
+  maxLength: 72,
+  hint: "12 to 72 characters; accented letters and symbols count as more than one. A passphrase works well.",
+} as const;
+
 type Field = {
   name: string;
   label: string;

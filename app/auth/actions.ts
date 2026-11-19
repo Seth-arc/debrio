@@ -35,9 +35,12 @@ const CODE_ERRORS = {
 function message(
   error: unknown,
   known: Record<string, string>,
-  retryable = SIGN_IN_UNAVAILABLE
+  timedOut = SIGN_IN_UNAVAILABLE
 ) {
-  if (isAuthRetryableFetchError(error)) return retryable;
+  // A 504 means Auth timed out mid-request (for example while sending mail);
+  // other retryable errors mean Auth itself could not be reached.
+  if (isAuthRetryableFetchError(error))
+    return error.status === 504 ? timedOut : SIGN_IN_UNAVAILABLE;
   const code = isAuthError(error) ? error.code : undefined;
   return Object.entries(known).find(([key]) => key === code)?.[1] ?? GENERIC;
 }
@@ -84,6 +87,9 @@ export async function signUp(_: FormState, data: FormData): Promise<FormState> {
     password,
     options: { emailRedirectTo: `${origin}/auth/confirm` },
   });
+  // A per-address resend limit only hits addresses that exist; answer as usual.
+  if (isAuthError(error) && error.code === "over_email_send_rate_limit")
+    redirect("/sign-up?sent=1");
   if (error)
     return {
       error: message(
@@ -91,7 +97,6 @@ export async function signUp(_: FormState, data: FormData): Promise<FormState> {
         {
           weak_password: "Choose a longer, less common password.",
           email_address_invalid: "Enter a valid email address.",
-          over_email_send_rate_limit: TOO_MANY,
           over_request_rate_limit: TOO_MANY,
         },
         MAIL_UNCERTAIN
@@ -133,6 +138,10 @@ export async function requestPasswordReset(
     text(data, "email").trim(),
     { redirectTo: `${origin}/auth/confirm?flow=recovery` }
   );
+  // Auth limits resends per address, which only happens for real accounts. A link
+  // was sent recently, so answer exactly as for any other address.
+  if (isAuthError(error) && error.code === "over_email_send_rate_limit")
+    redirect("/forgot-password?sent=1");
   if (error)
     return {
       error: message(
@@ -140,7 +149,6 @@ export async function requestPasswordReset(
         {
           email_address_invalid: "Enter a valid email address.",
           validation_failed: "Enter a valid email address.",
-          over_email_send_rate_limit: TOO_MANY,
           over_request_rate_limit: TOO_MANY,
         },
         MAIL_UNCERTAIN
@@ -204,7 +212,7 @@ export async function verifyEnrollment(
         mfa_factor_not_found: "Set-up expired. Reload the page to start again.",
       }),
     };
-  redirect("/workspace");
+  redirect(destination(data));
 }
 
 export async function verifySignIn(
@@ -220,28 +228,28 @@ export async function verifySignIn(
   return { error: message(error, CODE_ERRORS) };
 }
 
+// AAL2 owner for the account page's actions; sensitive changes also need a
+// code from the last 10 minutes, otherwise the page asks for one first.
+async function accountOwner(needsFreshCode: boolean) {
+  const host = await currentHost();
+  if (host.state === "unavailable") return { error: SIGN_IN_UNAVAILABLE };
+  if (host.state === "aal1") redirect("/mfa?next=account");
+  if (host.state !== "aal2") redirect("/sign-in");
+  if (needsFreshCode && !hasFreshCode(host.codeVerifiedAt))
+    redirect("/account?status=recheck");
+  return { host };
+}
+
 // Re-checks an AAL2 owner before a sensitive change (refreshes the code time).
 export async function confirmIdentity(
   _: FormState,
   data: FormData
 ): Promise<FormState> {
-  const host = await currentHost();
-  if (host.state === "unavailable") return { error: SIGN_IN_UNAVAILABLE };
-  if (host.state === "aal1") redirect("/mfa?next=account");
-  if (host.state !== "aal2") redirect("/sign-in");
-  const error = await verifyAnyCode(host, text(data, "code").trim());
+  const owner = await accountOwner(false);
+  if ("error" in owner) return owner;
+  const error = await verifyAnyCode(owner.host, text(data, "code").trim());
   if (!error) redirect("/account");
   return { error: message(error, CODE_ERRORS) };
-}
-
-// Sensitive changes: AAL2 with an authenticator code from the last 10 minutes.
-async function recentlyCheckedHost() {
-  const host = await currentHost();
-  if (host.state === "unavailable") return { error: SIGN_IN_UNAVAILABLE };
-  if (host.state === "aal1") redirect("/mfa?next=account");
-  if (host.state !== "aal2") redirect("/sign-in");
-  if (!hasFreshCode(host.codeVerifiedAt)) redirect("/account");
-  return { host };
 }
 
 export async function changePassword(
@@ -251,14 +259,14 @@ export async function changePassword(
   const password = text(data, "password");
   const problem = passwordProblem(password);
   if (problem) return { error: problem };
-  const checked = await recentlyCheckedHost();
+  const checked = await accountOwner(true);
   if ("error" in checked) return checked;
   const auth = checked.host.supabase.auth;
   const { error } = await auth.updateUser({ password });
   if (error)
     return {
       error: message(error, {
-        same_password: "Choose a password you haven't used for this account.",
+        same_password: "Choose a password different from your current one.",
         weak_password: "Choose a longer, less common password.",
         over_request_rate_limit: TOO_MANY,
       }),
@@ -269,16 +277,16 @@ export async function changePassword(
   if (others.error)
     return {
       error:
-        "Your password was changed, but your other devices couldn't be signed out. Try changing it again, or contact support.",
+        "Your password was changed, but your other devices couldn't be signed out. Change your password again to retry.",
     };
-  redirect("/account?password=changed");
+  redirect("/account?status=password-changed");
 }
 
 export async function changeEmail(
   _: FormState,
   data: FormData
 ): Promise<FormState> {
-  const checked = await recentlyCheckedHost();
+  const checked = await accountOwner(true);
   if ("error" in checked) return checked;
   const origin = await siteOrigin();
   if (!origin) return { error: GENERIC };

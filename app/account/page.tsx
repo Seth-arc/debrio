@@ -8,10 +8,10 @@ import {
   confirmIdentity,
   signOut,
 } from "../auth/actions";
-import { Form } from "../form";
+import { Form, NEW_PASSWORD_RULE } from "../form";
 import { HostProblem } from "../host-problem";
 import { CODE_FIELD } from "../mfa/enroll";
-import { emailNotice, passwordNotice } from "../notices";
+import { emailNotice, otherNotice } from "../notices";
 
 // Identity is per request; never prerender.
 export const dynamic = "force-dynamic";
@@ -20,15 +20,21 @@ export const metadata: Metadata = { title: "Account · Debrio" };
 export default async function Account({
   searchParams,
 }: {
-  searchParams: Promise<{ email?: string; password?: string }>;
+  searchParams: Promise<{ email?: string; status?: string }>;
 }) {
-  const { email, password } = await searchParams;
+  const { email, status } = await searchParams;
   const host = await currentHost();
   if (host.state === "signed-out")
-    redirect(emailNotice(email) ? `/sign-in?email=${email}` : "/sign-in");
+    redirect(
+      emailNotice(email, "signed-out") ? `/sign-in?email=${email}` : "/sign-in"
+    );
   if (host.state === "aal1") redirect("/mfa?next=account");
   if (host.state !== "aal2") return <HostProblem state={host.state} />;
-  const notice = emailNotice(email) ?? passwordNotice(password);
+  // "changed" is only claimed once Auth shows no pending address.
+  const notice =
+    (email === "changed" && host.user.new_email
+      ? undefined
+      : emailNotice(email, "signed-in")) ?? otherNotice(status);
   const signOutForm = (
     <form action={signOut}>
       <button type="submit" className="secondary">
@@ -75,15 +81,7 @@ export default async function Account({
           action={changePassword}
           submit="Change password"
           fields={[
-            {
-              name: "password",
-              label: "New password",
-              type: "password",
-              autoComplete: "new-password",
-              minLength: 12,
-              maxLength: 72,
-              hint: "12 to 72 characters; accented letters and symbols count as more than one.",
-            },
+            { name: "password", label: "New password", ...NEW_PASSWORD_RULE },
           ]}
         />
       </section>
