@@ -48,7 +48,17 @@ export type Host =
       supabase: SupabaseClient;
       user: User;
       verifiedFactorIds: string[];
+      // Unix seconds of this session's latest authenticator code, if any.
+      codeVerifiedAt: number | null;
     };
+
+export type SignedInHost = Extract<Host, { state: "aal1" | "aal2" }>;
+
+// Sensitive changes need an authenticator code entered within the last 10 minutes.
+export const hasFreshCode = (
+  codeVerifiedAt: number | null,
+  nowSeconds = Date.now() / 1000
+) => codeVerifiedAt !== null && nowSeconds - codeVerifiedAt < 600;
 
 // The Auth server verifies the session on every call; cookies alone are not trusted.
 export async function currentHost(): Promise<Host> {
@@ -65,11 +75,19 @@ export async function currentHost(): Promise<Host> {
         status === "verified" && factor_type === "totp"
     )
     .map(({ id }) => id);
+  // Older tokens list methods as bare strings, which carry no time.
+  const codeTimes = (level?.currentAuthenticationMethods ?? []).flatMap(
+    (entry) =>
+      typeof entry === "object" && entry.method === "totp"
+        ? [entry.timestamp]
+        : []
+  );
   return {
     state: level?.currentLevel === "aal2" ? "aal2" : "aal1",
     supabase,
     user: data.user,
     verifiedFactorIds,
+    codeVerifiedAt: codeTimes.length > 0 ? Math.max(...codeTimes) : null,
   };
 }
 

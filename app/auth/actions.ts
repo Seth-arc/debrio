@@ -5,9 +5,11 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import {
   currentHost,
+  hasFreshCode,
   serverSupabase,
   SIGN_IN_UNAVAILABLE,
   SIGN_IN_UNCONFIGURED,
+  type SignedInHost,
 } from "../../lib/supabase";
 import type { FormState } from "../form";
 
@@ -18,49 +20,82 @@ const text = (data: FormData, name: string) => {
 
 const TOO_MANY = "Too many attempts. Wait a minute, then try again.";
 const UNCONFIGURED = SIGN_IN_UNCONFIGURED;
+const GENERIC = "Something went wrong and nothing was changed. Try again.";
 const WRONG_CODE =
   "That code didn't match. Check the newest code in your authenticator app and your device's clock, then try again.";
+// Auth times out when mail can't be sent, after possibly saving the change.
+const MAIL_UNCERTAIN =
+  "We couldn't confirm the email was sent. Wait a few minutes and check your inbox before trying again.";
+const CODE_ERRORS = {
+  mfa_verification_failed: WRONG_CODE,
+  mfa_challenge_expired: WRONG_CODE,
+  over_request_rate_limit: TOO_MANY,
+};
 
-function message(error: unknown, known: Record<string, string>) {
-  if (isAuthRetryableFetchError(error)) return SIGN_IN_UNAVAILABLE;
+function message(
+  error: unknown,
+  known: Record<string, string>,
+  retryable = SIGN_IN_UNAVAILABLE
+) {
+  if (isAuthRetryableFetchError(error)) return retryable;
   const code = isAuthError(error) ? error.code : undefined;
-  return (
-    Object.entries(known).find(([key]) => key === code)?.[1] ??
-    "Something went wrong and nothing was changed. Try again."
-  );
+  return Object.entries(known).find(([key]) => key === code)?.[1] ?? GENERIC;
+}
+
+// Auth rejects passwords over 72 bytes (its hashing limit) with a generic code.
+const passwordProblem = (password: string) =>
+  password.length < 12 || Buffer.byteLength(password) > 72
+    ? "Use a password of 12 to 72 characters. Accented letters and symbols count as more than one."
+    : null;
+
+// Next.js checks Origin against Host for actions; without it there is no safe link target.
+// Auth only accepts link targets on its allow-list.
+const siteOrigin = async () => (await headers()).get("origin");
+
+// Only this literal is accepted, so no request value becomes a redirect target.
+const destination = (data: FormData) =>
+  text(data, "next") === "account" ? "/account" : "/workspace";
+
+// A code can come from the main or a backup authenticator.
+async function verifyAnyCode(host: SignedInHost, code: string) {
+  let lastError: unknown;
+  for (const factorId of host.verifiedFactorIds) {
+    const { error } = await host.supabase.auth.mfa.challengeAndVerify({
+      factorId,
+      code,
+    });
+    if (!error) return null;
+    lastError = error;
+  }
+  return lastError ?? new Error("No authenticator is set up.");
 }
 
 export async function signUp(_: FormState, data: FormData): Promise<FormState> {
   const email = text(data, "email").trim();
   const password = text(data, "password");
-  // Auth rejects passwords over 72 bytes (its hashing limit) with a generic code.
-  if (password.length < 12 || Buffer.byteLength(password) > 72)
-    return {
-      error:
-        "Use a password of 12 to 72 characters. Accented letters and symbols count as more than one.",
-    };
+  const problem = passwordProblem(password);
+  if (problem) return { error: problem };
   const supabase = await serverSupabase();
   if (!supabase) return { error: UNCONFIGURED };
-  // Next.js checks Origin against Host for actions; without it there is no safe link target.
-  const origin = (await headers()).get("origin");
-  if (!origin)
-    return {
-      error: "Something went wrong and nothing was changed. Try again.",
-    };
+  const origin = await siteOrigin();
+  if (!origin) return { error: GENERIC };
   const { error } = await supabase.auth.signUp({
     email,
     password,
-    // Auth only accepts redirect targets on its allow-list.
     options: { emailRedirectTo: `${origin}/auth/confirm` },
   });
   if (error)
     return {
-      error: message(error, {
-        weak_password: "Choose a longer, less common password.",
-        email_address_invalid: "Enter a valid email address.",
-        over_email_send_rate_limit: TOO_MANY,
-        over_request_rate_limit: TOO_MANY,
-      }),
+      error: message(
+        error,
+        {
+          weak_password: "Choose a longer, less common password.",
+          email_address_invalid: "Enter a valid email address.",
+          over_email_send_rate_limit: TOO_MANY,
+          over_request_rate_limit: TOO_MANY,
+        },
+        MAIL_UNCERTAIN
+      ),
     };
   redirect("/sign-up?sent=1");
 }
@@ -83,6 +118,35 @@ export async function signIn(_: FormState, data: FormData): Promise<FormState> {
       }),
     };
   redirect("/mfa");
+}
+
+export async function requestPasswordReset(
+  _: FormState,
+  data: FormData
+): Promise<FormState> {
+  const supabase = await serverSupabase();
+  if (!supabase) return { error: UNCONFIGURED };
+  const origin = await siteOrigin();
+  if (!origin) return { error: GENERIC };
+  // Auth answers the same for unknown addresses, so this reveals nothing while mail works.
+  const { error } = await supabase.auth.resetPasswordForEmail(
+    text(data, "email").trim(),
+    { redirectTo: `${origin}/auth/confirm?flow=recovery` }
+  );
+  if (error)
+    return {
+      error: message(
+        error,
+        {
+          email_address_invalid: "Enter a valid email address.",
+          validation_failed: "Enter a valid email address.",
+          over_email_send_rate_limit: TOO_MANY,
+          over_request_rate_limit: TOO_MANY,
+        },
+        MAIL_UNCERTAIN
+      ),
+    };
+  redirect("/forgot-password?sent=1");
 }
 
 export type Enrollment =
@@ -136,10 +200,8 @@ export async function verifyEnrollment(
   if (error)
     return {
       error: message(error, {
-        mfa_verification_failed: WRONG_CODE,
-        mfa_challenge_expired: WRONG_CODE,
+        ...CODE_ERRORS,
         mfa_factor_not_found: "Set-up expired. Reload the page to start again.",
-        over_request_rate_limit: TOO_MANY,
       }),
     };
   redirect("/workspace");
@@ -151,26 +213,95 @@ export async function verifySignIn(
 ): Promise<FormState> {
   const host = await currentHost();
   if (host.state === "unavailable") return { error: SIGN_IN_UNAVAILABLE };
-  if (host.state === "aal2") redirect("/workspace");
+  if (host.state === "aal2") redirect(destination(data));
   if (host.state !== "aal1") redirect("/sign-in");
-  const code = text(data, "code").trim();
-  let lastError: unknown;
-  // A code can come from the main or a backup authenticator.
-  for (const factorId of host.verifiedFactorIds) {
-    const { error } = await host.supabase.auth.mfa.challengeAndVerify({
-      factorId,
-      code,
-    });
-    if (!error) redirect("/workspace");
-    lastError = error;
-  }
-  return {
-    error: message(lastError, {
-      mfa_verification_failed: WRONG_CODE,
-      mfa_challenge_expired: WRONG_CODE,
-      over_request_rate_limit: TOO_MANY,
-    }),
-  };
+  const error = await verifyAnyCode(host, text(data, "code").trim());
+  if (!error) redirect(destination(data));
+  return { error: message(error, CODE_ERRORS) };
+}
+
+// Re-checks an AAL2 owner before a sensitive change (refreshes the code time).
+export async function confirmIdentity(
+  _: FormState,
+  data: FormData
+): Promise<FormState> {
+  const host = await currentHost();
+  if (host.state === "unavailable") return { error: SIGN_IN_UNAVAILABLE };
+  if (host.state === "aal1") redirect("/mfa?next=account");
+  if (host.state !== "aal2") redirect("/sign-in");
+  const error = await verifyAnyCode(host, text(data, "code").trim());
+  if (!error) redirect("/account");
+  return { error: message(error, CODE_ERRORS) };
+}
+
+// Sensitive changes: AAL2 with an authenticator code from the last 10 minutes.
+async function recentlyCheckedHost() {
+  const host = await currentHost();
+  if (host.state === "unavailable") return { error: SIGN_IN_UNAVAILABLE };
+  if (host.state === "aal1") redirect("/mfa?next=account");
+  if (host.state !== "aal2") redirect("/sign-in");
+  if (!hasFreshCode(host.codeVerifiedAt)) redirect("/account");
+  return { host };
+}
+
+export async function changePassword(
+  _: FormState,
+  data: FormData
+): Promise<FormState> {
+  const password = text(data, "password");
+  const problem = passwordProblem(password);
+  if (problem) return { error: problem };
+  const checked = await recentlyCheckedHost();
+  if ("error" in checked) return checked;
+  const auth = checked.host.supabase.auth;
+  const { error } = await auth.updateUser({ password });
+  if (error)
+    return {
+      error: message(error, {
+        same_password: "Choose a password you haven't used for this account.",
+        weak_password: "Choose a longer, less common password.",
+        over_request_rate_limit: TOO_MANY,
+      }),
+    };
+  // Auth (v2.198) already ends other sessions on a password change; this keeps the
+  // guarantee explicit rather than relying on undocumented behaviour.
+  const others = await auth.signOut({ scope: "others" });
+  if (others.error)
+    return {
+      error:
+        "Your password was changed, but your other devices couldn't be signed out. Try changing it again, or contact support.",
+    };
+  redirect("/account?password=changed");
+}
+
+export async function changeEmail(
+  _: FormState,
+  data: FormData
+): Promise<FormState> {
+  const checked = await recentlyCheckedHost();
+  if ("error" in checked) return checked;
+  const origin = await siteOrigin();
+  if (!origin) return { error: GENERIC };
+  // Auth sends a link to both the current and the new address; both must confirm.
+  const { error } = await checked.host.supabase.auth.updateUser(
+    { email: text(data, "email").trim() },
+    { emailRedirectTo: `${origin}/auth/confirm?flow=email` }
+  );
+  if (error)
+    return {
+      error: message(
+        error,
+        {
+          email_exists: "That address can't be used for this account.",
+          email_address_invalid: "Enter a valid email address.",
+          validation_failed: "Enter a valid email address.",
+          over_email_send_rate_limit: TOO_MANY,
+          over_request_rate_limit: TOO_MANY,
+        },
+        MAIL_UNCERTAIN
+      ),
+    };
+  redirect("/account?email=sent");
 }
 
 export async function signOut() {
