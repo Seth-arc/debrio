@@ -20,10 +20,14 @@ test("the shell is accessible and its health link works with the keyboard", asyn
       () => document.documentElement.scrollWidth <= window.innerWidth
     )
   ).toBe(true);
-  await page.keyboard.press("Tab");
-  await expect(
-    page.getByRole("link", { name: "Check application health" })
-  ).toBeFocused();
+  for (const name of [
+    "Sign in",
+    "Create an account",
+    "Check application health",
+  ]) {
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name })).toBeFocused();
+  }
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL("/api/health");
   await expect(page.locator("body")).toContainText('"status":"ok"');

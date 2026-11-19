@@ -19,8 +19,9 @@
     "test": "vitest run",
     "test:guards": "node scripts/check-failure.mjs",
     "test:browser": "playwright test",
-    "db:start": "docker compose up -d --wait db",
-    "db:reset": "docker compose down --volumes && docker compose up -d --wait db",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "db:start": "docker compose up -d --wait && node scripts/db-migrate.mjs",
+    "db:reset": "docker compose down --volumes && npm run db:start",
     "test:db": "docker compose run --rm tests",
     "db:stop": "docker compose down --volumes",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test",
@@ -34,6 +35,8 @@
     "probe:agora": "node scripts/run-agora-probe.mjs"
   },
   "dependencies": {
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.119.0",
     "livekit-client": "2.24.1",
     "livekit-server-sdk": "2.20.0",
     "next": "16.4.6",
