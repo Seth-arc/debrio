@@ -10,7 +10,11 @@ import {
   isJoinKey,
   newGuestCredential,
 } from "../../lib/guest";
-import { guestSupabase, SIGN_IN_UNCONFIGURED } from "../../lib/supabase";
+import {
+  guestSupabase,
+  serverSupabase,
+  SIGN_IN_UNCONFIGURED,
+} from "../../lib/supabase";
 import type { FormState } from "../form";
 
 const REFUSALS = {
@@ -47,10 +51,14 @@ export async function requestAdmission(
   )
     redirect(`/s/${sessionForKey}`);
   const credential = newGuestCredential();
-  const { data: sessionId, error } = await guest.rpc("request_admission", {
+  // Signed-in visitors call with their own Auth session so the account is
+  // recorded as evidence; everyone else is anonymous. Neither grants entry.
+  const caller = (await serverSupabase()) ?? guest;
+  const { data: sessionId, error } = await caller.rpc("request_admission", {
     p_key: key,
     p_display_name: name,
     p_credential_hash: credentialHash(credential),
+    p_returning: data.get("returning") === "yes",
   });
   if (error)
     return {

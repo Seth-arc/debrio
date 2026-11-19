@@ -29,6 +29,11 @@ const PLACES = {
     text: () =>
       "The host didn't let you in. If that was a mistake, open the session link again to ask.",
   },
+  moved: {
+    heading: "This place moved to another device",
+    text: () =>
+      "The host restored your place on another device, so this browser no longer has access. If that wasn't you, tell the host.",
+  },
   removed: {
     heading: "Removed from the session",
     text: () =>
@@ -74,7 +79,11 @@ export default async function GuestSession({
   } else if (!place) {
     heading = "This page isn't available to you";
     text = "Open the session link your host shared to ask to join.";
-  } else if (place.session_state === "ended") {
+  } else if (
+    place.session_state === "ended" &&
+    // A returning request still waits for the host; a moved place says so.
+    !["waiting", "moved"].includes(place.participant_state)
+  ) {
     heading = "This session has ended";
     text = "Thanks for coming.";
   } else {

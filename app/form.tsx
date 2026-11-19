@@ -16,7 +16,7 @@ export const NEW_PASSWORD_RULE = {
 type Field = {
   name: string;
   label: string;
-  type?: "email" | "password" | "text";
+  type?: "email" | "password" | "text" | "checkbox";
   autoComplete?: string;
   inputMode?: "numeric";
   pattern?: string;
@@ -64,6 +64,25 @@ export function Form({
       ))}
       {fields.map((field) => {
         const hintId = field.hint ? `${id}-${field.name}-hint` : undefined;
+        // An optional yes/no choice: box first, then its label.
+        if (field.type === "checkbox")
+          return (
+            <div className="field check" key={field.name}>
+              <input
+                id={`${id}-${field.name}`}
+                name={field.name}
+                type="checkbox"
+                value="yes"
+                aria-describedby={hintId}
+              />
+              <label htmlFor={`${id}-${field.name}`}>{field.label}</label>
+              {field.hint && (
+                <p className="hint" id={hintId}>
+                  {field.hint}
+                </p>
+              )}
+            </div>
+          );
         return (
           <div className="field" key={field.name}>
             <label htmlFor={`${id}-${field.name}`}>{field.label}</label>

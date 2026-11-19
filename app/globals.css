@@ -138,3 +138,45 @@ button:disabled {
 #join-link {
   max-width: 100%;
 }
+
+.field.check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.6rem;
+}
+
+.field.check label {
+  margin: 0;
+}
+
+.field.check .hint {
+  flex-basis: 100%;
+}
+
+.tag {
+  border: 1px solid #345c49;
+  border-radius: 4px;
+  padding: 0 0.35rem;
+  font-size: 0.875rem;
+}
+
+.restore {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+
+.restore label {
+  margin: 0;
+}
+
+select {
+  padding: 0.6rem 0.5rem;
+  border: 2px solid #6b766f;
+  border-radius: 6px;
+  background: #fffefb;
+  color: inherit;
+  font: inherit;
+}
