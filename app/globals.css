@@ -106,19 +106,9 @@ button:disabled {
   opacity: 0.7;
 }
 
-.form-error,
-.notice {
-  border-inline-start: 4px solid #9b2c22;
-  padding-inline-start: 0.75rem;
-}
-
 .form-error {
   color: #8a261d;
   font-weight: 700;
-}
-
-.notice {
-  border-color: #345c49;
 }
 
 .qr {

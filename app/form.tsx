@@ -1,11 +1,8 @@
 "use client";
 
-import { useActionState, useId } from "react";
+import { startTransition, useActionState, useId } from "react";
 
-export type FormState = {
-  error?: string;
-  values?: Record<string, string>;
-} | null;
+export type FormState = { error?: string } | null;
 
 type Field = {
   name: string;
@@ -17,10 +14,9 @@ type Field = {
   minLength?: number;
   maxLength?: number;
   hint?: string;
-  keep?: boolean;
 };
 
-// One server-action form: native validation, kept values and an announced error.
+// One server-action form: native validation and an error announced on every reply.
 export function Form({
   action,
   submit,
@@ -32,11 +28,27 @@ export function Form({
   fields: Field[];
   hidden?: Record<string, string>;
 }) {
-  const [state, formAction, pending] = useActionState(action, null);
+  const [state, formAction, pending] = useActionState(
+    async (
+      previous: (FormState & { reply: number }) | null,
+      data: FormData
+    ) => ({
+      ...(await action(previous, data)),
+      reply: (previous?.reply ?? 0) + 1,
+    }),
+    null
+  );
   const id = useId();
   return (
-    // Remount after each reply so kept values survive React's post-action form reset.
-    <form action={formAction} key={JSON.stringify(state)}>
+    <form
+      action={formAction}
+      onSubmit={(event) => {
+        // Submitting outside React's form action keeps typed values and focus after an error.
+        event.preventDefault();
+        const data = new FormData(event.currentTarget);
+        startTransition(() => formAction(data));
+      }}
+    >
       {Object.entries(hidden).map(([name, value]) => (
         <input key={name} type="hidden" name={name} value={value} />
       ))}
@@ -60,9 +72,6 @@ export function Form({
               pattern={field.pattern}
               minLength={field.minLength}
               maxLength={field.maxLength}
-              defaultValue={
-                field.keep ? state?.values?.[field.name] : undefined
-              }
               aria-invalid={state?.error ? true : undefined}
               aria-describedby={
                 [hintId, state?.error && `${id}-error`]
@@ -74,7 +83,13 @@ export function Form({
         );
       })}
       {state?.error && (
-        <p className="form-error" role="alert" id={`${id}-error`}>
+        // A new node per reply, so a repeated message is announced again.
+        <p
+          className="form-error"
+          role="alert"
+          id={`${id}-error`}
+          key={state.reply}
+        >
           {state.error}
         </p>
       )}

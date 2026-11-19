@@ -73,5 +73,8 @@ export async function currentHost(): Promise<Host> {
   };
 }
 
+export const SIGN_IN_UNCONFIGURED =
+  "Sign-in isn't available in this environment.";
+
 export const SIGN_IN_UNAVAILABLE =
   "Sign-in verification is unavailable right now. Nothing was changed. Try again shortly.";

@@ -50,6 +50,7 @@ async function signUp(page: Page, email: string) {
   await expect(
     page.getByRole("heading", { name: "Check your email" })
   ).toBeVisible();
+  await expectAccessible(page);
 }
 
 test("an individual secures sign-in, creates a workspace and returns to it", async ({
@@ -66,6 +67,13 @@ test("an individual secures sign-in, creates a workspace and returns to it", asy
     page.getByRole("heading", { name: "Create your account" })
   ).toBeVisible();
   await expectAccessible(page);
+  // 40 characters but 80 bytes: over Auth's 72-byte limit, so a password message.
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill("é".repeat(40));
+  await page.getByLabel("Password").press("Enter");
+  await expect(formError(page)).toHaveText(
+    "Use a password of 12 to 72 characters."
+  );
   await signUp(page, email);
 
   await page.goto(await confirmationLink(email));
@@ -84,20 +92,20 @@ test("an individual secures sign-in, creates a workspace and returns to it", asy
   expect(secret).not.toBe(abandoned);
 
   await page.getByLabel("6-digit code").fill("000000");
-  await page.getByRole("button", { name: "Verify and continue" }).click();
+  await page.getByLabel("6-digit code").press("Enter");
   await expect(formError(page)).toContainText("That code didn't match");
   await page.getByLabel("6-digit code").fill(await freshCode(secret));
-  await page.getByRole("button", { name: "Verify and continue" }).click();
+  await page.getByLabel("6-digit code").press("Enter");
 
   await expect(
     page.getByRole("heading", { name: "Create your workspace" })
   ).toBeVisible();
   await expectAccessible(page);
   await page.getByLabel("Workspace name").fill("   ");
-  await page.getByRole("button", { name: "Create workspace" }).click();
+  await page.getByLabel("Workspace name").press("Enter");
   await expect(formError(page)).toContainText("1 to 80 characters");
   await page.getByLabel("Workspace name").fill(workspace);
-  await page.getByRole("button", { name: "Create workspace" }).click();
+  await page.getByLabel("Workspace name").press("Enter");
   await expect(page.getByRole("heading", { name: workspace })).toBeVisible();
   await expect(page.getByText("1 authenticator is set up.")).toBeVisible();
   await expectAccessible(page);
@@ -115,7 +123,7 @@ test("an individual secures sign-in, creates a workspace and returns to it", asy
   const backupSecret = (await page.locator(".secret").textContent())!.trim();
   expect(backupSecret).not.toBe(secret);
   await page.getByLabel("6-digit code").fill(await freshCode(backupSecret));
-  await page.getByRole("button", { name: "Verify and continue" }).click();
+  await page.getByLabel("6-digit code").press("Enter");
   await expect(page.getByText("2 authenticators are set up.")).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
@@ -134,8 +142,19 @@ test("an individual secures sign-in, creates a workspace and returns to it", asy
     "The email or password is incorrect."
   );
   await expect(page.getByLabel("Email")).toHaveValue(email);
+  await expect(page.getByLabel("Password")).toBeFocused();
   await expectAccessible(page);
-  await page.getByLabel("Password").focus();
+  // The same mistake again is announced again: the alert is a fresh node.
+  const firstAlert = await formError(page).elementHandle();
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => firstAlert!.evaluate((node) => node.isConnected))
+    .toBe(false);
+  await expect(formError(page)).toHaveText(
+    "The email or password is incorrect."
+  );
+  await expect(page.getByLabel("Password")).toBeFocused();
+  await page.keyboard.press("Control+A");
   await page.keyboard.type(SYNTHETIC_PASSWORD);
   await page.keyboard.press("Enter");
 
@@ -167,6 +186,7 @@ test("a confirmation link opened elsewhere or reused signs nobody in", async ({
   await other.goto(link);
   await expect(other).toHaveURL(CONFIRM_FAILED);
   await expect(other.getByRole("status")).toContainText("didn't sign you in");
+  await expectAccessible(other);
   await other.goto("/workspace");
   await expect(other).toHaveURL("/sign-in");
   await elsewhere.close();

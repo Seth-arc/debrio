@@ -21,7 +21,7 @@ export default async function SignIn({
       <p className="wordmark">Debrio</p>
       <h1>Sign in</h1>
       {confirm === "failed" && (
-        <p className="notice" role="status">
+        <p role="status">
           That link didn&apos;t sign you in. It may have expired, been used
           already or been opened in another browser. If your address is
           confirmed, sign in below. Otherwise create your account again to get a
@@ -37,7 +37,6 @@ export default async function SignIn({
             label: "Email",
             type: "email",
             autoComplete: "email",
-            keep: true,
           },
           {
             name: "password",

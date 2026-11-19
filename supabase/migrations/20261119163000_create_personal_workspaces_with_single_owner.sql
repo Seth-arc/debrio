@@ -24,7 +24,10 @@ grant execute on function public.current_session_has_mfa() to authenticated;
 
 create table public.workspaces (
   id uuid primary key default gen_random_uuid(),
-  name text not null check (char_length(btrim(name)) between 1 and 80),
+  -- 1 to 80 characters with no leading/trailing whitespace, so it is never blank.
+  name text not null check (
+    char_length(name) between 1 and 80 and name !~ '^[[:space:]]|[[:space:]]$'
+  ),
   -- Exactly one primary owner per workspace; an owner account cannot be deleted out from under it.
   owner_id uuid not null default auth.uid() references auth.users (id) on delete restrict,
   created_at timestamptz not null default now()

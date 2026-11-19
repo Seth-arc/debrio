@@ -44,7 +44,6 @@ export default async function SignUp({
             label: "Email",
             type: "email",
             autoComplete: "email",
-            keep: true,
           },
           {
             name: "password",
@@ -52,7 +51,8 @@ export default async function SignUp({
             type: "password",
             autoComplete: "new-password",
             minLength: 12,
-            hint: "At least 12 characters.",
+            maxLength: 72,
+            hint: "12 to 72 characters. A passphrase works well.",
           },
         ]}
       />

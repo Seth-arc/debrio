@@ -20,6 +20,7 @@ export default async function Workspace() {
   const { data: workspace, error } = await host.supabase
     .from("workspaces")
     .select("name")
+    // shortcut: assumes one owned workspace (unique index); list them when the switcher lands.
     .maybeSingle();
   const signOutForm = (
     <form action={signOut}>
@@ -59,7 +60,6 @@ export default async function Workspace() {
               hint: "For example, your name or your practice's name. Up to 80 characters.",
               maxLength: 80,
               autoComplete: "organization",
-              keep: true,
             },
           ]}
         />

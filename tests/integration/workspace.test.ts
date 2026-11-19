@@ -136,7 +136,8 @@ describe("personal workspace authorization", { timeout: 30_000 }, () => {
 
   test("workspace names must contain 1 to 80 visible characters", async () => {
     const owner = await ownerWithMfa();
-    for (const name of ["   ", "x".repeat(81)]) {
+    const blankOrPadded = ["   ", "\t\n", " Leading", "Trailing\t"];
+    for (const name of [...blankOrPadded, "x".repeat(81)]) {
       const invalid = await workspaces(owner.host).insert({ name });
       expect(invalid.error?.code).toBe("23514");
     }

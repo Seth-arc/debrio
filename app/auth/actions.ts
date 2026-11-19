@@ -7,6 +7,7 @@ import {
   currentHost,
   serverSupabase,
   SIGN_IN_UNAVAILABLE,
+  SIGN_IN_UNCONFIGURED,
 } from "../../lib/supabase";
 import type { FormState } from "../form";
 
@@ -16,7 +17,7 @@ const text = (data: FormData, name: string) => {
 };
 
 const TOO_MANY = "Too many attempts. Wait a minute, then try again.";
-const UNCONFIGURED = "Sign-in isn't available in this environment.";
+const UNCONFIGURED = SIGN_IN_UNCONFIGURED;
 const WRONG_CODE =
   "That code didn't match. Check the newest code in your authenticator app and your device's clock, then try again.";
 
@@ -32,12 +33,17 @@ function message(error: unknown, known: Record<string, string>) {
 export async function signUp(_: FormState, data: FormData): Promise<FormState> {
   const email = text(data, "email").trim();
   const password = text(data, "password");
-  const values = { email };
-  if (password.length < 12)
-    return { error: "Use a password of at least 12 characters.", values };
+  // Auth rejects passwords over 72 bytes (its hashing limit) with a generic code.
+  if (password.length < 12 || Buffer.byteLength(password) > 72)
+    return { error: "Use a password of 12 to 72 characters." };
   const supabase = await serverSupabase();
-  if (!supabase) return { error: UNCONFIGURED, values };
+  if (!supabase) return { error: UNCONFIGURED };
+  // Next.js checks Origin against Host for actions; without it there is no safe link target.
   const origin = (await headers()).get("origin");
+  if (!origin)
+    return {
+      error: "Something went wrong and nothing was changed. Try again.",
+    };
   const { error } = await supabase.auth.signUp({
     email,
     password,
@@ -49,20 +55,17 @@ export async function signUp(_: FormState, data: FormData): Promise<FormState> {
       error: message(error, {
         weak_password: "Choose a longer, less common password.",
         email_address_invalid: "Enter a valid email address.",
-        validation_failed: "Enter a valid email address.",
         over_email_send_rate_limit: TOO_MANY,
         over_request_rate_limit: TOO_MANY,
       }),
-      values,
     };
   redirect("/sign-up?sent=1");
 }
 
 export async function signIn(_: FormState, data: FormData): Promise<FormState> {
   const email = text(data, "email").trim();
-  const values = { email };
   const supabase = await serverSupabase();
-  if (!supabase) return { error: UNCONFIGURED, values };
+  if (!supabase) return { error: UNCONFIGURED };
   const { error } = await supabase.auth.signInWithPassword({
     email,
     password: text(data, "password"),
@@ -75,7 +78,6 @@ export async function signIn(_: FormState, data: FormData): Promise<FormState> {
           "Confirm your email address first, using the link we sent you.",
         over_request_rate_limit: TOO_MANY,
       }),
-      values,
     };
   redirect("/mfa");
 }
@@ -90,6 +92,9 @@ export async function startEnrollment(): Promise<Enrollment> {
   // Adding a backup requires the existing authenticator first (Auth enforces this too).
   if (host.verifiedFactorIds.length > 0 && host.state !== "aal2")
     redirect("/mfa");
+  // The accepted design is one authenticator plus one optional backup.
+  if (host.verifiedFactorIds.length >= 2)
+    return { error: "You already have a backup authenticator." };
   // Abandoned set-up attempts leave unverified factors; replace them.
   for (const factor of host.user.factors ?? [])
     if (factor.status === "unverified")
@@ -117,9 +122,11 @@ export async function verifyEnrollment(
   _: FormState,
   data: FormData
 ): Promise<FormState> {
-  const supabase = await serverSupabase();
-  if (!supabase) return { error: UNCONFIGURED };
-  const { error } = await supabase.auth.mfa.challengeAndVerify({
+  const host = await currentHost();
+  if (host.state === "unavailable") return { error: SIGN_IN_UNAVAILABLE };
+  if (host.state !== "aal1" && host.state !== "aal2") redirect("/sign-in");
+  // Auth also checks the factor belongs to this user.
+  const { error } = await host.supabase.auth.mfa.challengeAndVerify({
     factorId: text(data, "factorId"),
     code: text(data, "code").trim(),
   });
