@@ -14,10 +14,12 @@ import {
 } from "livekit-server-sdk";
 import { initialMonitorState } from "../../lib/monitor-probe";
 import type { MonitorView } from "../../lib/monitor-probe";
+import { revocationCutoff } from "../../lib/probe-provider";
 
 declare global {
   interface Window {
     monitorMedia: { peers: RTCPeerConnection[]; captures: MediaStreamTrack[] };
+    hostilePublishRequests: number;
   }
 }
 function instrumentMedia() {
@@ -126,9 +128,10 @@ const invitations: Invitation[] = JSON.parse(
   await readFile(".artifacts/media-probe/monitor-invitations.json", "utf8")
 );
 const provider = new RoomServiceClient(
-  "ws://127.0.0.1:7880",
-  "probe-local",
-  "synthetic-local-fixture-not-a-cloud-key"
+  process.env.LIVEKIT_URL!,
+  process.env.LIVEKIT_API_KEY!,
+  process.env.LIVEKIT_API_SECRET!,
+  { requestTimeout: 3, failover: false }
 );
 const invite = (identity: string) =>
   invitations.find((a) => a.identity === identity)!;
@@ -162,11 +165,13 @@ async function participant(page: Page, identity: string, camera = false) {
   if (camera) await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Join assigned room" }).click();
   await expect
-    .poll(async () =>
-      JSON.stringify({
-        media: await page.getByTestId("media-state").textContent(),
-        status: await page.getByTestId("connection-status").textContent(),
-      })
+    .poll(
+      async () =>
+        JSON.stringify({
+          media: await page.getByTestId("media-state").textContent(),
+          status: await page.getByTestId("connection-status").textContent(),
+        }),
+      { timeout: process.env.MEDIA_PROBE_CLOUD === "1" ? 20_000 : 5_000 }
     )
     .toContain("Media connected");
   if (camera)
@@ -208,6 +213,390 @@ test.beforeEach(async ({ page }) => {
   await writeFile(
     ".artifacts/media-probe/monitor-state.json",
     JSON.stringify(initialMonitorState())
+  );
+});
+
+test("P1-02 Cloud qualification: hostile subscriptions, publication, removal and cached grants", async ({
+  page,
+  browser,
+}) => {
+  const cloud = process.env.MEDIA_PROBE_CLOUD === "1";
+  const one = await peerPage(browser);
+  const late = await peerPage(browser);
+  await participant(one, "breakout-1-1", true);
+  // Hold an earlier participant grant so its publication can race a new notice.
+  const lateGrant = (
+    await (await api(page, invite("breakout-1-2"), "grant")).json()
+  ).grant;
+  await one.route("**/api/probe/monitor", async (route) => {
+    if (route.request().postDataJSON()?.action === "ack")
+      return route.fulfill({ status: 409, json: { error: "Held notice" } });
+    return route.continue();
+  });
+  let state = await (
+    await api(page, invite("facilitator"), "request", {
+      revision: 0,
+      target: "breakout-1",
+      mode: "listen",
+    })
+  ).json();
+  expect(
+    (
+      await api(page, invite("facilitator"), "grant", { route: state.route.id })
+    ).status()
+  ).toBe(409);
+  await one.unroute("**/api/probe/monitor");
+  await expect
+    .poll(
+      async () =>
+        (await (await api(page, invite("facilitator"), "read")).json()).route
+          .acknowledged
+    )
+    .toContain("breakout-1-1");
+  const { grant } = await (
+    await api(page, invite("facilitator"), "grant", { route: state.route.id })
+  ).json();
+  await page.goto("/");
+  await page.addScriptTag({
+    path: "node_modules/livekit-client/dist/livekit-client.umd.js",
+  });
+  // No application poll, notice filtering, Stop handler or voluntary disconnect.
+  await page.evaluate(async (grant) => {
+    window.probeRoom = new window.LivekitClient.Room();
+    await window.probeRoom.connect(grant.url, grant.token, {
+      autoSubscribe: true,
+    });
+  }, grant);
+  expect(
+    (
+      await api(page, invite("facilitator"), "connected", {
+        route: state.route.id,
+      })
+    ).status()
+  ).toBe(200);
+  await flowing(page, "inbound-rtp");
+  const subscribed = () =>
+    page.evaluate(() =>
+      [...window.probeRoom.remoteParticipants.values()]
+        .flatMap((p) =>
+          [...p.trackPublications.values()]
+            .filter((t) => t.track)
+            .map((t) => `${p.identity}:${t.source}`)
+        )
+        .sort()
+    );
+  await expect.poll(subscribed).toEqual(["breakout-1-1:microphone"]);
+  await late.route("**/api/probe/monitor", async (route) => {
+    const action = route.request().postDataJSON()?.action;
+    if (action === "ack")
+      return route.fulfill({ status: 409, json: { error: "Held notice" } });
+    if (action === "grant") {
+      const current = await (
+        await api(page, invite("breakout-1-2"), "read")
+      ).json();
+      return route.fulfill({ json: { ...current, grant: lateGrant } });
+    }
+    return route.continue();
+  });
+  await participant(late, "breakout-1-2");
+  await expect(late.getByTestId("notice")).toContainText(
+    "Facilitator Ada listening"
+  );
+  await page.evaluate(() => {
+    for (const p of window.probeRoom.remoteParticipants.values())
+      for (const t of p.trackPublications.values()) t.setSubscribed(true);
+  });
+  // Bounded negative observation with a simultaneous positive RTP control.
+  for (let sample = 0; sample < 3; sample++) {
+    await flowing(page, "inbound-rtp");
+    expect(await subscribed()).toEqual(["breakout-1-1:microphone"]);
+  }
+  await late.unroute("**/api/probe/monitor");
+  await expect
+    .poll(subscribed)
+    .toEqual(["breakout-1-1:microphone", "breakout-1-2:microphone"]);
+  await page.evaluate(async () => {
+    const local = window.probeRoom.localParticipant as unknown as {
+      hasPermissionsToPublish: () => boolean;
+    };
+    local.hasPermissionsToPublish = () => true;
+    const signal = window.probeRoom.engine.client;
+    const send = signal.sendAddTrack.bind(signal);
+    window.hostilePublishRequests = 0;
+    signal.sendAddTrack = (request) => {
+      window.hostilePublishRequests++;
+      return send(request);
+    };
+    const [track] = await window.LivekitClient.createLocalTracks({
+      audio: true,
+    });
+    void window.probeRoom.localParticipant
+      .publishTrack(track)
+      .catch(() => {})
+      .finally(() => track.stop());
+  });
+  await expect
+    .poll(() => page.evaluate(() => window.hostilePublishRequests))
+    .toBeGreaterThan(0);
+  for (let sample = 0; sample < 3; sample++) {
+    await flowing(page, "inbound-rtp");
+    expect(
+      (
+        await provider.getParticipant(
+          state.route.providerRoom,
+          state.route.identity
+        )
+      ).tracks
+    ).toHaveLength(0);
+    // A hostile sender can emit packets; acceptance/forwarding is the SFU boundary.
+    await expect(one.getByTestId("media-state")).toContainText(
+      "Received tracks: 1"
+    );
+  }
+  const verifier = new TokenVerifier(
+    process.env.LIVEKIT_API_KEY!,
+    process.env.LIVEKIT_API_SECRET!
+  );
+  const originalClaims = await verifier.verify(grant.token);
+  expect(originalClaims.video?.room).toBe(state.route.providerRoom);
+  const wrong = grant.token.split(".");
+  wrong[1] = Buffer.from(
+    JSON.stringify({
+      ...originalClaims,
+      video: {
+        ...originalClaims.video,
+        room: invite("other-session").providerRoom,
+      },
+    })
+  ).toString("base64url");
+  const replay = async (token: string) =>
+    page.evaluate(
+      async ({ url, token }) => {
+        const room = new window.LivekitClient.Room();
+        try {
+          await room.connect(url, token, { maxRetries: 0 });
+          return "joined";
+        } catch (error) {
+          const denied =
+            error instanceof window.LivekitClient.ConnectionError &&
+            error.reason ===
+              window.LivekitClient.ConnectionErrorReason.NotAllowed &&
+            [401, 403].includes(error.status ?? 0);
+          return denied ? "denied" : "unexpected connection failure";
+        } finally {
+          await room.disconnect();
+        }
+      },
+      { url: grant.url, token }
+    );
+  expect(await replay(wrong.join("."))).toBe("denied");
+  await provider.updateParticipant(
+    state.route.providerRoom,
+    state.route.identity,
+    { metadata: "synthetic-refresh" }
+  );
+  const refreshed = () =>
+    page.evaluate(
+      () => (window.probeRoom.engine as unknown as { token: string }).token
+    );
+  await expect
+    .poll(async () => (await verifier.verify(await refreshed())).metadata)
+    .toBe("synthetic-refresh");
+  const refreshedToken = await refreshed();
+  const refreshedClaims = await verifier.verify(refreshedToken);
+  const serverVersion = await page.evaluate(
+    () =>
+      window.probeRoom.engine.latestJoinResponse?.serverInfo?.version ??
+      "not reported"
+  );
+  await flowing(page, "inbound-rtp");
+  const cutoff = Number(revocationCutoff());
+  const removedAt = Date.now();
+  expect(cutoff).toBeGreaterThan(originalClaims.nbf!);
+  expect(cutoff).toBeGreaterThan(refreshedClaims.nbf!);
+  expect(refreshedClaims.exp!).toBeLessThanOrEqual(
+    Math.floor(removedAt / 1000) + 600
+  );
+  // App Stop performs provider removal while this raw client ignores the UI.
+  state = await (await api(page, invite("facilitator"), "read")).json();
+  expect(
+    (
+      await api(page, invite("facilitator"), "stop", {
+        revision: state.revision,
+      })
+    ).status()
+  ).toBe(200);
+  await expect
+    .poll(() => page.evaluate(() => window.probeRoom.state))
+    .toBe("disconnected");
+  const removalMs = Date.now() - removedAt;
+  expect(await audioPackets(page, "inbound-rtp")).toBe(0);
+  if (cloud) {
+    expect(originalClaims.exp!).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    expect(await replay(grant.token)).toBe("denied");
+    expect(await replay(refreshedToken)).toBe("denied");
+  }
+  // A new permitted speaking route is a positive control for publication and active revocation.
+  state = await (await api(page, invite("facilitator"), "read")).json();
+  state = await (
+    await api(page, invite("facilitator"), "request", {
+      revision: state.revision,
+      target: "breakout-1",
+      mode: "speak",
+    })
+  ).json();
+  await expect
+    .poll(
+      async () =>
+        (await (await api(page, invite("facilitator"), "read")).json()).route
+          .acknowledged.length
+    )
+    .toBe(2);
+  const speaking = (
+    await (
+      await api(page, invite("facilitator"), "grant", { route: state.route.id })
+    ).json()
+  ).grant;
+  await page.evaluate(async (grant) => {
+    window.probeRoom = new window.LivekitClient.Room();
+    await window.probeRoom.connect(grant.url, grant.token);
+    await window.probeRoom.localParticipant.setMicrophoneEnabled(true);
+  }, speaking);
+  expect(
+    (
+      await api(page, invite("facilitator"), "connected", {
+        route: state.route.id,
+      })
+    ).status()
+  ).toBe(200);
+  await flowing(page, "inbound-rtp");
+  await flowing(page, "outbound-rtp");
+  const revokeAt = Date.now();
+  expect((await api(page, invite("operator"), "revoke")).status()).toBe(200);
+  await expect
+    .poll(() => page.evaluate(() => window.probeRoom.state))
+    .toBe("disconnected");
+  const revokeMs = Date.now() - revokeAt;
+  expect(await audioPackets(page, "inbound-rtp")).toBe(0);
+  expect(await audioPackets(page, "outbound-rtp")).toBe(0);
+  if (cloud) expect(await replay(speaking.token)).toBe("denied");
+  expect(
+    (
+      await api(page, invite("facilitator"), "grant", { route: state.route.id })
+    ).status()
+  ).toBe(403);
+  const boundaries: {
+    kind: string;
+    nbf: number;
+    exp: number;
+    removalRequestAt: number;
+    cutoff: number;
+    equalityCutoff?: number;
+    equalityResult?: string;
+    equalityRequestAt?: number;
+  }[] = [];
+  if (cloud) {
+    for (const kind of [
+      "refreshed token equality",
+      "first removal while absent",
+    ]) {
+      const actor = invite(
+        kind === "refreshed token equality" ? "breakout-3-1" : "breakout-4-1"
+      );
+      const freshGrant = (await (await api(page, actor, "grant")).json()).grant;
+      await page.evaluate(async (grant) => {
+        window.probeRoom = new window.LivekitClient.Room();
+        await window.probeRoom.connect(grant.url, grant.token);
+      }, freshGrant);
+      let replayToken = freshGrant.token;
+      if (kind === "refreshed token equality") {
+        await provider.updateParticipant(actor.providerRoom, actor.identity, {
+          metadata: "same-second-boundary",
+        });
+        await expect
+          .poll(
+            async () => (await verifier.verify(await refreshed())).metadata,
+            { intervals: [10], timeout: 2000 }
+          )
+          .toBe("same-second-boundary");
+        replayToken = await refreshed();
+      } else {
+        await page.evaluate(() => window.probeRoom.disconnect());
+        expect(
+          (await provider.listParticipants(actor.providerRoom)).some(
+            (p) => p.identity === actor.identity
+          )
+        ).toBe(false);
+      }
+      const claims = await verifier.verify(replayToken);
+      let equalityResult: string | undefined;
+      let equalityRequestAt: number | undefined;
+      if (kind === "refreshed token equality") {
+        expect(claims.exp!).toBeGreaterThan(Math.floor(Date.now() / 1000));
+        equalityRequestAt = Date.now();
+        await provider.removeParticipant(actor.providerRoom, actor.identity, {
+          revokeTokenTs: BigInt(claims.nbf!),
+        });
+        await expect
+          .poll(() => page.evaluate(() => window.probeRoom.state))
+          .toBe("disconnected");
+        equalityResult = await replay(replayToken);
+        expect(equalityResult).toBe("joined");
+        expect(claims.exp!).toBeGreaterThan(Math.floor(Date.now() / 1000));
+      }
+      const removalRequestAt = Date.now();
+      const cutoff = revocationCutoff(removalRequestAt);
+      expect(Number(cutoff)).toBeGreaterThan(claims.nbf!);
+      expect(claims.exp!).toBeGreaterThan(Math.floor(removalRequestAt / 1000));
+      expect(claims.exp!).toBeLessThanOrEqual(
+        Math.floor(removalRequestAt / 1000) + 600
+      );
+      await provider.removeParticipant(actor.providerRoom, actor.identity, {
+        revokeTokenTs: cutoff,
+      });
+      await expect
+        .poll(() => page.evaluate(() => window.probeRoom.state))
+        .toBe("disconnected");
+      expect(await replay(replayToken)).toBe("denied");
+      expect(claims.exp!).toBeGreaterThan(Math.floor(Date.now() / 1000));
+      boundaries.push({
+        kind,
+        nbf: claims.nbf!,
+        exp: claims.exp!,
+        removalRequestAt,
+        cutoff: Number(cutoff),
+        equalityCutoff: equalityResult ? claims.nbf : undefined,
+        equalityResult,
+        equalityRequestAt,
+      });
+    }
+  }
+  await mkdir(".artifacts/P1-02", { recursive: true });
+  await writeFile(
+    ".artifacts/P1-02/qualification.json",
+    JSON.stringify(
+      {
+        cloud,
+        browser: browser.version(),
+        client: "2.24.1",
+        serverSdk: "2.20.0",
+        removalMs,
+        revokeMs,
+        serverVersion,
+        boundaries,
+        original: { nbf: originalClaims.nbf, exp: originalClaims.exp },
+        refreshed: { nbf: refreshedClaims.nbf, exp: refreshedClaims.exp },
+        cachedReplay: cloud
+          ? "denied: original, refreshed, already absent"
+          : "unverified on local server",
+        hostile:
+          "notice/camera/publication/other-session negatives passed with positive RTP control",
+        physicalAudio: "unverified",
+        observedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    )
   );
 });
 test.afterEach(async ({ page }) => {

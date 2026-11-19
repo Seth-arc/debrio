@@ -24,7 +24,11 @@ class RequestError extends Error {
 }
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export default function MonitoringProbe() {
+export default function MonitoringProbe({
+  cloud = false,
+}: {
+  cloud?: boolean;
+}) {
   const [view, setView] = useState<MonitorView | null>(null);
   const [message, setMessage] = useState(
     "Enter a private synthetic invitation."
@@ -107,6 +111,43 @@ export default function MonitoringProbe() {
           publication.setSubscribed(allowed);
     }
   }
+  function syncPublisherPermissions(room = active.current) {
+    const value = latest.current;
+    if (!room || !value) return;
+    const route = value.route;
+    const permissions =
+      value.role === "participant"
+        ? value.peers.map((participantIdentity) => ({
+            participantIdentity,
+            allowAll: true,
+            allowedTrackSids: [] as string[],
+          }))
+        : [];
+    if (route && ["notice", "active"].includes(route.phase)) {
+      const allowedTrackSids = [
+        ...room.localParticipant.trackPublications.values(),
+      ]
+        .filter(
+          (p) =>
+            p.source === "microphone" ||
+            (route.mode === "join" && p.source === "camera")
+        )
+        .map((p) => p.trackSid);
+      const identities =
+        value.role === "participant"
+          ? route.acknowledged.includes(value.identity)
+            ? [route.identity]
+            : []
+          : route.acknowledged;
+      for (const participantIdentity of identities)
+        permissions.push({
+          participantIdentity,
+          allowAll: false,
+          allowedTrackSids,
+        });
+    }
+    room.localParticipant.setTrackSubscriptionPermissions(false, permissions);
+  }
   function stopScan() {
     scan.current = false;
     setScanning(false);
@@ -173,6 +214,7 @@ export default function MonitoringProbe() {
         if (disposed || value.revision < (latest.current?.revision ?? 0))
           return;
         syncParticipantPlayback();
+        syncPublisherPermissions();
         if (
           (value.revoked && value.role === "facilitator") ||
           (value.role === "facilitator" &&
@@ -250,9 +292,14 @@ export default function MonitoringProbe() {
     const room = new Room({
       reconnectPolicy: { nextRetryDelayInMs: () => null },
     });
+    // Persist default-deny before connecting/publishing; SFU checks it against hostile subscribers.
+    room.localParticipant.setTrackSubscriptionPermissions(false, []);
     active.current = room;
     activeRevision.current = revision;
     room.on(RoomEvent.TrackPublished, syncParticipantPlayback);
+    room.on(RoomEvent.LocalTrackPublished, () =>
+      syncPublisherPermissions(room)
+    );
     room.on(RoomEvent.TrackSubscribed, (track) => {
       output.current?.append(track.attach());
     });
@@ -279,6 +326,7 @@ export default function MonitoringProbe() {
       return;
     }
     syncParticipantPlayback();
+    syncPublisherPermissions(room);
     if (mode !== "listen") {
       const acquired = await createLocalTracks({
         audio: true,
@@ -435,12 +483,14 @@ export default function MonitoringProbe() {
 
   return (
     <main className={styles.probe}>
-      <p className="wordmark">Debrio · local synthetic monitoring</p>
+      <p className="wordmark">Debrio · synthetic monitoring</p>
       <h1>Visible room controls</h1>
       <p>
-        Local prototype only. No hosted usage or recording service. Old-token
-        replay on this local SFU is not prevented; provider and two-device
-        acceptance remain incomplete.
+        {cloud
+          ? "LiveKit Cloud qualification fixture. Bounded test usage; no recording service."
+          : "Local prototype only. No hosted usage or recording service. Old-token replay on this local SFU is not prevented."}{" "}
+        Provider and physical-device acceptance require separate recorded
+        results.
       </p>
       {!view ? (
         <form

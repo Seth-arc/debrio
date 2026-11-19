@@ -4,5 +4,5 @@ import MonitoringProbe from "./probe";
 export const dynamic = "force-dynamic";
 export default function Page() {
   if (!probeEnabled() || process.env.MEDIA_MONITOR_PROBE !== "1") notFound();
-  return <MonitoringProbe />;
+  return <MonitoringProbe cloud={process.env.MEDIA_PROBE_CLOUD === "1"} />;
 }

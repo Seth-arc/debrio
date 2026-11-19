@@ -41,7 +41,7 @@ const request = (index: number, action: string, extra = {}) => ({
   revision: 0,
   ...extra,
 });
-function setup() {
+function setup(cloud = false) {
   const state = initialMonitorState();
   let connected = "";
   const provider = {
@@ -63,7 +63,8 @@ function setup() {
     state,
     provider as unknown as RoomServiceClient,
     persist,
-    sign
+    sign,
+    cloud
   );
   return {
     state,
@@ -78,6 +79,25 @@ function setup() {
 }
 
 describe("P1-02 scoped route controller", () => {
+  it("AC2 Cloud revokes an already absent identity and preserves failed cleanup for retry", async () => {
+    const { controller, state, provider } = setup(true);
+    await controller.handle(
+      request(0, "request", { target: "breakout-1", mode: "listen" })
+    );
+    const identity = state.route!.identity;
+    provider.removeParticipant.mockRejectedValueOnce(new Error("Unavailable"));
+    await expect(
+      controller.handle(request(0, "stop", { revision: state.next }))
+    ).rejects.toMatchObject({ status: 503 });
+    expect(state.route?.phase).toBe("failed");
+    await controller.handle(request(0, "stop", { revision: state.next }));
+    expect(provider.removeParticipant).toHaveBeenCalledWith(
+      "a-breakout-1",
+      identity,
+      { revokeTokenTs: expect.any(BigInt) }
+    );
+    expect(state.route).toBeNull();
+  });
   it("AC3 retries a transient replacement lock but never acknowledges or deletes the prior file on persistent failure", async () => {
     const directory = await mkdtemp(join(tmpdir(), "debrio-monitor-lock-"));
     const path = join(directory, "state.json");
@@ -182,6 +202,7 @@ describe("P1-02 scoped route controller", () => {
       request(0, "request", { target: "breakout-1", mode: "listen" })
     );
     const old = state.route!.id;
+    const oldIdentity = state.route!.identity;
     connect();
     await controller.handle(request(4, "fault", { enabled: true }));
     await expect(
@@ -208,7 +229,8 @@ describe("P1-02 scoped route controller", () => {
     );
     expect(provider.removeParticipant).toHaveBeenCalledWith(
       "a-breakout-1",
-      `monitor-${old}`
+      oldIdentity,
+      undefined
     );
     expect(state.events.map((e) => e.kind).slice(-2)).toEqual([
       "closed",
