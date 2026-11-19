@@ -52,7 +52,7 @@ export default async function SignUp({
             autoComplete: "new-password",
             minLength: 12,
             maxLength: 72,
-            hint: "12 to 72 characters. A passphrase works well.",
+            hint: "12 to 72 characters; accented letters and symbols count as more than one. A passphrase works well.",
           },
         ]}
       />

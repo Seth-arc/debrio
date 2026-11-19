@@ -71,7 +71,7 @@ test("an individual secures sign-in, creates a workspace and returns to it", asy
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill("é".repeat(40));
   await page.getByLabel("Password").press("Enter");
-  await expect(formError(page)).toHaveText(
+  await expect(formError(page)).toContainText(
     "Use a password of 12 to 72 characters."
   );
   await signUp(page, email);

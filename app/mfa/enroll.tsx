@@ -6,7 +6,7 @@ import {
   verifyEnrollment,
   type Enrollment,
 } from "../auth/actions";
-import { Form } from "../form";
+import { Form, replyKey } from "../form";
 
 export const CODE_FIELD = {
   name: "code",
@@ -27,7 +27,7 @@ export function EnrollAuthenticator({ start }: { start: string }) {
     return (
       <form action={startAction}>
         {enrollment?.error && (
-          <p className="form-error" role="alert">
+          <p className="form-error" role="alert" key={replyKey(enrollment)}>
             {enrollment.error}
           </p>
         )}

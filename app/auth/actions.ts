@@ -35,7 +35,10 @@ export async function signUp(_: FormState, data: FormData): Promise<FormState> {
   const password = text(data, "password");
   // Auth rejects passwords over 72 bytes (its hashing limit) with a generic code.
   if (password.length < 12 || Buffer.byteLength(password) > 72)
-    return { error: "Use a password of 12 to 72 characters." };
+    return {
+      error:
+        "Use a password of 12 to 72 characters. Accented letters and symbols count as more than one.",
+    };
   const supabase = await serverSupabase();
   if (!supabase) return { error: UNCONFIGURED };
   // Next.js checks Origin against Host for actions; without it there is no safe link target.

@@ -16,6 +16,15 @@ type Field = {
   hint?: string;
 };
 
+// Each server reply is a new object; give it a stable key so a repeated message
+// is a new alert node and is announced again.
+const replyIds = new WeakMap<object, number>();
+let lastReplyId = 0;
+export function replyKey(reply: object) {
+  if (!replyIds.has(reply)) replyIds.set(reply, ++lastReplyId);
+  return replyIds.get(reply);
+}
+
 // One server-action form: native validation and an error announced on every reply.
 export function Form({
   action,
@@ -28,16 +37,8 @@ export function Form({
   fields: Field[];
   hidden?: Record<string, string>;
 }) {
-  const [state, formAction, pending] = useActionState(
-    async (
-      previous: (FormState & { reply: number }) | null,
-      data: FormData
-    ) => ({
-      ...(await action(previous, data)),
-      reply: (previous?.reply ?? 0) + 1,
-    }),
-    null
-  );
+  // The server action itself, so the form also submits before scripts load.
+  const [state, formAction, pending] = useActionState(action, null);
   const id = useId();
   return (
     <form
@@ -88,7 +89,7 @@ export function Form({
           className="form-error"
           role="alert"
           id={`${id}-error`}
-          key={state.reply}
+          key={replyKey(state)}
         >
           {state.error}
         </p>
