@@ -1,6 +1,6 @@
 import { createServer, request } from "node:http";
 import { once } from "node:events";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { phoneProxy } from "../../lib/probe-phone";
 
 it("phone endpoint forwards only scoped requests and denies origin/path/size/expiry attacks", async () => {
@@ -15,7 +15,8 @@ it("phone endpoint forwards only scoped requests and denies origin/path/size/exp
   if (!address || typeof address === "string")
     throw new Error("Missing test port");
   let origin = "https://test.trycloudflare.com";
-  const proxy = phoneProxy(() => origin, Date.now() + 60000, address.port);
+  const expiresAt = Date.now() + 60000;
+  const proxy = phoneProxy(() => origin, expiresAt, address.port);
   proxy.listen(0, "127.0.0.1");
   await once(proxy, "listening");
   const listening = proxy.address();
@@ -82,14 +83,27 @@ it("phone endpoint forwards only scoped requests and denies origin/path/size/exp
         await fetch(url + "/api/probe/monitor", {
           method: "POST",
           headers,
-          body: "x".repeat(4097),
+          body: "x".repeat(16385),
         })
       ).status
     ).toBe(413);
+    expect(
+      (
+        await fetch(url + "/api/probe/monitor", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ action: "save", text: "漢".repeat(2000) }),
+        })
+      ).status
+    ).toBe(200);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(expiresAt);
+    expect((await fetch(url + "/probe/monitor", { headers })).status).toBe(410);
+    clock.mockRestore();
     origin = "";
     expect((await fetch(url + "/probe/monitor", { headers })).status).toBe(410);
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
   } finally {
+    vi.restoreAllMocks();
     proxy.closeAllConnections();
     app.closeAllConnections();
     await Promise.all([

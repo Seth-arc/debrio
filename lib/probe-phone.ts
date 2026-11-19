@@ -33,7 +33,7 @@ export function phoneProxy(
     try {
       for await (const chunk of incoming) {
         size += chunk.length;
-        if (size > 4096) return reject(413);
+        if (size > 16384) return reject(413);
         chunks.push(chunk);
       }
       const body = Buffer.concat(chunks);
