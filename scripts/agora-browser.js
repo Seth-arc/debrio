@@ -3,7 +3,7 @@
   const peers = [];
   const interventions = [];
   let resist = false;
-  let blockSignalling = false;
+  let signallingSends = 0;
   // shortcut: selected SDK teardown paths only; use independent protocol/provider proof before adoption.
   const NativePeer = window.RTCPeerConnection;
   window.RTCPeerConnection = class extends NativePeer {
@@ -12,14 +12,14 @@
       peers.push(this);
     }
   };
-  function guard(prototype, method, asynchronous = false) {
+  function guard(prototype, method, asynchronous = false, label = method) {
     // Method names come only from the fixed instrumentation calls below.
     // eslint-disable-next-line security/detect-object-injection
     const original = prototype[method];
     // eslint-disable-next-line security/detect-object-injection
     prototype[method] = function (...args) {
       if (resist) {
-        interventions.push({ at: Date.now(), method });
+        interventions.push({ at: Date.now(), method: label });
         return asynchronous ? Promise.resolve() : undefined;
       }
       return original.apply(this, args);
@@ -44,17 +44,12 @@
       else enabled.set.call(this, value);
     },
   });
-  for (const method of ["send", "close"]) {
-    // Fixed WebSocket methods; block client leave messages without stopping RTP.
-    // eslint-disable-next-line security/detect-object-injection
-    const original = WebSocket.prototype[method];
-    // eslint-disable-next-line security/detect-object-injection
-    WebSocket.prototype[method] = function (...args) {
-      if (blockSignalling)
-        interventions.push({ at: Date.now(), method: "WebSocket." + method });
-      else return original.apply(this, args);
-    };
-  }
+  guard(WebSocket.prototype, "close", false, "WebSocket.close");
+  const send = WebSocket.prototype.send;
+  WebSocket.prototype.send = function (...args) {
+    if (resist) signallingSends++;
+    return send.apply(this, args);
+  };
   const direction = Object.getOwnPropertyDescriptor(
     RTCRtpTransceiver.prototype,
     "direction"
@@ -69,6 +64,20 @@
   AgoraRTC.setLogLevel(4);
   AgoraRTC.disableLogUpload();
   const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+  // Probe-only private hooks in pinned 4.24.10; refuse changed SDK shapes.
+  for (const [object, method, asynchronous, label] of [
+    [client, "leave", true, "client.leave"],
+    [client, "_reset", false, "client._reset"],
+    [client._gateway, "leave", true, "gateway.leave"],
+    [client._gateway, "reset", false, "gateway.reset"],
+    [client._gateway?.signal, "close", false, "signal.close"],
+  ]) {
+    // Fixed hook names above; never inspect or record SDK credential fields.
+    // eslint-disable-next-line security/detect-object-injection
+    if (!object || typeof object[method] !== "function")
+      throw new Error("Pinned Agora teardown hook unavailable");
+    guard(object, method, asynchronous, label);
+  }
   const events = [];
   let track;
   let audio;
@@ -111,11 +120,10 @@
     },
     renew: (token) => client.renewToken(token),
     publish,
-    resist(blockOutbound = false) {
+    resist() {
       resist = true;
-      blockSignalling = blockOutbound;
       document.querySelector("#mode").textContent =
-        "Expiry challenge: client teardown resisted";
+        "Matched control and expiry: teardown resisted; signalling allowed";
     },
     async sample() {
       const reports = await Promise.all(
@@ -139,12 +147,13 @@
         state: client.connectionState,
         peers: peers.map((p) => p.connectionState),
         interventions: interventions.length,
+        signallingSends,
+        guarded: resist,
       };
     },
     evidence: () => ({ events, interventions }),
     async leave() {
       resist = false;
-      blockSignalling = false;
       track?.close();
       await audio?.close();
       await client.leave();
