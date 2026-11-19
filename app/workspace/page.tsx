@@ -6,6 +6,7 @@ import { signOut } from "../auth/actions";
 import { Form } from "../form";
 import { HostProblem } from "../host-problem";
 import { EnrollAuthenticator } from "../mfa/enroll";
+import { createSession } from "../sessions/actions";
 import { createWorkspace } from "./actions";
 
 // Identity is per request; never prerender.
@@ -66,6 +67,10 @@ export default async function Workspace() {
         {signOutForm}
       </main>
     );
+  const { data: sessions } = await host.supabase
+    .from("sessions")
+    .select("id, title, state")
+    .order("created_at", { ascending: false });
   return (
     <main>
       <p className="wordmark">Debrio</p>
@@ -73,6 +78,37 @@ export default async function Workspace() {
       <p>
         You own this workspace. Signed in as <strong>{host.user.email}</strong>.
       </p>
+      <section aria-labelledby="sessions-heading">
+        <h2 id="sessions-heading">Sessions</h2>
+        {sessions === null ? (
+          <p role="status">
+            Sessions couldn&apos;t be loaded. Reload to try again.
+          </p>
+        ) : sessions.length === 0 ? (
+          <p>No sessions yet.</p>
+        ) : (
+          <ul>
+            {sessions.map((session) => (
+              <li key={session.id}>
+                <Link href={`/sessions/${session.id}`}>{session.title}</Link>
+                {session.state === "ended" && " (ended)"}
+              </li>
+            ))}
+          </ul>
+        )}
+        <Form
+          action={createSession}
+          submit="Create session"
+          fields={[
+            {
+              name: "title",
+              label: "New session title",
+              maxLength: 120,
+              hint: "Participants see this when they join.",
+            },
+          ]}
+        />
+      </section>
       <section aria-labelledby="security">
         <h2 id="security">Sign-in security</h2>
         <p>

@@ -26,5 +26,10 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/workspace/:path*", "/mfa/:path*", "/account/:path*"],
+  matcher: [
+    "/workspace/:path*",
+    "/mfa/:path*",
+    "/account/:path*",
+    "/sessions/:path*",
+  ],
 };

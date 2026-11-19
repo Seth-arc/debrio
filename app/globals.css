@@ -121,3 +121,20 @@ button:disabled {
   overflow-wrap: anywhere;
   font-size: 1rem;
 }
+
+.inline {
+  display: inline;
+  margin: 0;
+}
+
+.people li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding-block: 0.4rem;
+}
+
+#join-link {
+  max-width: 100%;
+}

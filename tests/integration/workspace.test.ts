@@ -1,58 +1,7 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, test } from "vitest";
-import {
-  LOCAL_ANON_KEY,
-  LOCAL_SUPABASE_URL,
-  signLocalJwt,
-} from "../../scripts/local-supabase";
-import {
-  confirmationLink,
-  SYNTHETIC_PASSWORD,
-  syntheticEmail,
-} from "../support/local-auth";
-import { totp } from "../support/totp";
-
-const client = (accessToken?: string) =>
-  createClient(LOCAL_SUPABASE_URL, LOCAL_ANON_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-    global: accessToken
-      ? { headers: { Authorization: `Bearer ${accessToken}` } }
-      : undefined,
-  });
-
-// Real sign-up, emailed confirmation and password sign-in: an AAL1 session.
-async function confirmedHost() {
-  const email = syntheticEmail();
-  const host = client();
-  expect(
-    (await host.auth.signUp({ email, password: SYNTHETIC_PASSWORD })).error
-  ).toBeNull();
-  const verify = await fetch(await confirmationLink(email), {
-    redirect: "manual",
-  });
-  expect(verify.status).toBe(303);
-  const { data, error } = await host.auth.signInWithPassword({
-    email,
-    password: SYNTHETIC_PASSWORD,
-  });
-  expect(error).toBeNull();
-  return { host, userId: data.user!.id };
-}
-
-// Enrolls TOTP and upgrades the session to AAL2, as a workspace owner must.
-async function ownerWithMfa() {
-  const signedIn = await confirmedHost();
-  const { data: factor, error } = await signedIn.host.auth.mfa.enroll({
-    factorType: "totp",
-  });
-  expect(error).toBeNull();
-  const verified = await signedIn.host.auth.mfa.challengeAndVerify({
-    factorId: factor!.id,
-    code: totp(factor!.totp.secret),
-  });
-  expect(verified.error).toBeNull();
-  return signedIn;
-}
+import { signLocalJwt } from "../../scripts/local-supabase";
+import { client, confirmedHost, ownerWithMfa } from "../support/hosts";
 
 const workspaces = (host: SupabaseClient) => host.from("workspaces");
 
