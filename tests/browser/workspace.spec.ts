@@ -10,6 +10,8 @@ import { totp } from "../support/totp";
 // Requires the local stack (npm run db:start) and a production build.
 
 async function expectAccessible(page: Page) {
+  // Dynamic pages stream their <title> after the content; wait for this page's own.
+  await expect(page).toHaveTitle(/Debrio$/);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 }
 
