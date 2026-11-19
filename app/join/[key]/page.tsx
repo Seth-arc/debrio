@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { credentialHash, guestCookieName, isJoinKey } from "../../../lib/guest";
+import { guestCookieName, hasLivePlace, isJoinKey } from "../../../lib/guest";
 import { guestSupabase } from "../../../lib/supabase";
 import { Form } from "../../form";
 import { HostProblem } from "../../host-problem";
@@ -60,17 +60,14 @@ export default async function Join({
     );
 
   // The same browser already asked and is waiting or in: carry on there.
-  const credential = (await cookies()).get(guestCookieName(session.id))?.value;
-  if (credential) {
-    const { data } = await guest.rpc("guest_status", {
-      p_session: session.id,
-      p_credential_hash: credentialHash(credential),
-    });
-    const state = (data as { participant_state: string }[] | null)?.[0]
-      ?.participant_state;
-    if (state === "waiting" || state === "admitted")
-      redirect(`/s/${session.id}`);
-  }
+  if (
+    await hasLivePlace(
+      guest,
+      session.id,
+      (await cookies()).get(guestCookieName(session.id))?.value
+    )
+  )
+    redirect(`/s/${session.id}`);
   if (session.locked)
     return (
       <Closed

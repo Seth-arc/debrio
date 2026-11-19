@@ -6,6 +6,7 @@ import {
   credentialHash,
   GUEST_COOKIE_OPTIONS,
   guestCookieName,
+  hasLivePlace,
   isJoinKey,
   newGuestCredential,
 } from "../../lib/guest";
@@ -33,6 +34,18 @@ export async function requestAdmission(
     return { error: "Enter a name of 1 to 60 characters." };
   const guest = guestSupabase();
   if (!guest) return { error: SIGN_IN_UNCONFIGURED };
+  // A second tab or a resubmitted form must not replace a live place in the lobby.
+  const existing = await guest.rpc("session_for_join", { p_key: key });
+  const sessionForKey = (existing.data as { id: string }[] | null)?.[0]?.id;
+  if (
+    sessionForKey &&
+    (await hasLivePlace(
+      guest,
+      sessionForKey,
+      (await cookies()).get(guestCookieName(sessionForKey))?.value
+    ))
+  )
+    redirect(`/s/${sessionForKey}`);
   const credential = newGuestCredential();
   const { data: sessionId, error } = await guest.rpc("request_admission", {
     p_key: key,

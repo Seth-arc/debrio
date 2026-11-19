@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createHash, randomBytes } from "node:crypto";
 
 // A guest's private credential: 256 random bits, held only in their browser's
@@ -23,3 +24,20 @@ export const isSessionId = (value: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 
 export const isJoinKey = (value: string) => /^[0-9a-f]{32}$/.test(value);
+
+// True when this browser's credential already holds a live place (waiting or
+// admitted) in the session, so a new request must not replace it.
+export async function hasLivePlace(
+  guest: SupabaseClient,
+  sessionId: string,
+  credential: string | undefined
+) {
+  if (!credential) return false;
+  const { data } = await guest.rpc("guest_status", {
+    p_session: sessionId,
+    p_credential_hash: credentialHash(credential),
+  });
+  const state = (data as { participant_state: string }[] | null)?.[0]
+    ?.participant_state;
+  return state === "waiting" || state === "admitted";
+}

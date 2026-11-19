@@ -43,9 +43,16 @@ test("a host admits, removes and denies guests; lock, a new link and ending stop
     guest.getByRole("heading", { name: "Join Synthetic Workshop" })
   ).toBeVisible();
   await expectAccessible(guest);
+  // A second tab with the join form already open, submitted after the first.
+  const secondTab = await guestBrowser.newPage();
+  await secondTab.goto(link);
   await askToJoin(guest, link, "Ada Guest");
   await expectAccessible(guest);
   const guestPage = guest.url();
+  await secondTab.getByLabel("Your name").fill("Ada Guest");
+  await secondTab.getByLabel("Your name").press("Enter");
+  await expect(secondTab).toHaveURL(guestPage);
+  await secondTab.close();
   // The private credential lives only in an HttpOnly cookie.
   const credential = (await guestBrowser.cookies()).filter(({ name }) =>
     name.startsWith("dg_")
@@ -57,9 +64,10 @@ test("a host admits, removes and denies guests; lock, a new link and ending stop
   await expect(guest).toHaveURL(guestPage);
 
   // The host's page refreshes itself; admit from the keyboard.
+  // Two submissions from one browser still make exactly one request.
+  await expect(page.getByRole("status")).toContainText("1 waiting", SOON);
   const admit = page.getByRole("button", { name: "Admit Ada Guest" });
-  await expect(admit).toBeVisible(SOON);
-  await expect(page.getByRole("status")).toContainText("1 waiting");
+  await expect(admit).toBeVisible();
   await expectAccessible(page);
   await admit.focus();
   await page.keyboard.press("Enter");

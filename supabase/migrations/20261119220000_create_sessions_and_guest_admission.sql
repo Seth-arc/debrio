@@ -44,6 +44,8 @@ create table public.session_participants (
   state text not null default 'waiting'
     check (state in ('waiting', 'admitted', 'denied', 'removed')),
   -- SHA-256 of the guest's private credential; the credential itself is never stored.
+  -- Not readable by hosts (see grants): it identifies the guest to guest_status.
+  -- shortcut: no expiry or endpoint epoch yet; P2-01d's facilitator-verified recovery rotates it.
   credential_hash text not null unique check (credential_hash ~ '^[0-9a-f]{64}$'),
   requested_at timestamptz not null default now(),
   decided_at timestamptz,
@@ -67,8 +69,11 @@ create policy "Owners with MFA read their session participants"
   ));
 
 -- Supabase grants new tables to anon/authenticated by default; reads only, writes via functions.
+-- Hosts may read every participant column except the guest's credential hash.
 revoke all on public.sessions, public.session_participants from public, anon, authenticated;
-grant select on public.sessions, public.session_participants to authenticated;
+grant select on public.sessions to authenticated;
+grant select (id, session_id, display_name, state, requested_at, decided_at, decided_by)
+  on public.session_participants to authenticated;
 
 -- Host helper: the caller's open-or-ended session, or a permission error that
 -- does not reveal whether the session exists.
@@ -161,8 +166,11 @@ begin
   update public.sessions set state = 'ended', ended_at = now()
   where id = p_session and state = 'open'
   returning * into v_session;
-  -- Ending twice is a no-op.
-  return coalesce(v_session, public.require_owned_session(p_session));
+  -- Ending twice is a no-op that returns the already-ended session.
+  if not found then
+    return public.require_owned_session(p_session);
+  end if;
+  return v_session;
 end;
 $$;
 
@@ -203,7 +211,8 @@ begin
   if v_participant.state = v_target then
     return v_participant;
   end if;
-  raise exception 'invalid_transition' using errcode = 'P0001';
+  raise exception 'invalid_transition'
+    using errcode = 'P0001', detail = v_participant.state;
 end;
 $$;
 
@@ -219,7 +228,10 @@ as $$
 $$;
 
 -- Guest: ask to be let in. The session row lock serialises joins, so the
--- waiting limit holds under concurrency.
+-- waiting limit is exact under concurrency.
+-- shortcut: flood control is the per-session waiting cap only (hosts can close the
+-- lobby or replace the link); add per-client rate limiting at the edge before join
+-- links are shared publicly at scale.
 create function public.request_admission(
   p_key text, p_display_name text, p_credential_hash text
 )

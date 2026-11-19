@@ -36,7 +36,7 @@ export async function confirmedHost() {
     password: SYNTHETIC_PASSWORD,
   });
   expect(error).toBeNull();
-  return { host, userId: data.user!.id };
+  return { host, userId: data.user!.id, email };
 }
 
 // Enrolls TOTP and upgrades the session to AAL2, as a workspace owner must.

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, test } from "vitest";
 import { credentialHash, newGuestCredential } from "../../lib/guest";
 import { client, confirmedHost, ownerWithMfa } from "../support/hosts";
+import { SYNTHETIC_PASSWORD } from "../support/local-auth";
 
 type Session = { id: string; join_key: string; state: string; locked: boolean };
 
@@ -67,12 +68,17 @@ describe("guest admission", { timeout: 60_000 }, () => {
     });
 
     const id = await participantId(host, session.id);
+    const hashRead = await host
+      .from("session_participants")
+      .select("credential_hash")
+      .eq("id", id);
+    expect(hashRead.error?.code).toBe("42501");
     expect((await decide(host, id, "admit")).data.state).toBe("admitted");
     // Repeating a decision is a no-op; an impossible transition is refused.
     expect((await decide(host, id, "admit")).data.state).toBe("admitted");
-    expect((await decide(host, id, "deny")).error?.message).toBe(
-      "invalid_transition"
-    );
+    const refused = await decide(host, id, "deny");
+    expect(refused.error?.message).toBe("invalid_transition");
+    expect(refused.error?.details).toBe("admitted");
     expect((await status(session.id, first.hash))[0].participant_state).toBe(
       "admitted"
     );
@@ -122,6 +128,8 @@ describe("guest admission", { timeout: 60_000 }, () => {
     expect((await guestJoins(replaced.join_key)).joined.error).toBeNull();
 
     await host.rpc("end_session", { p_session: session.id });
+    const endedAgain = await host.rpc("end_session", { p_session: session.id });
+    expect(endedAgain.data).toMatchObject({ id: session.id, state: "ended" });
     expect((await guestJoins(replaced.join_key)).joined.error?.message).toBe(
       "session_ended"
     );
@@ -134,7 +142,7 @@ describe("guest admission", { timeout: 60_000 }, () => {
   });
 
   test("other hosts, hosts without MFA and anonymous callers cannot read or decide", async () => {
-    const { host, session } = await hostWithSession();
+    const { host, session, email } = await hostWithSession();
     await guestJoins(session.join_key);
     const id = await participantId(host, session.id);
 
@@ -146,7 +154,7 @@ describe("guest admission", { timeout: 60_000 }, () => {
       (
         await other.host
           .from("session_participants")
-          .select()
+          .select("id, display_name, state")
           .eq("session_id", session.id)
       ).data
     ).toEqual([]);
@@ -160,6 +168,33 @@ describe("guest admission", { timeout: 60_000 }, () => {
       }),
     ])
       expect((await call).error?.code).toBe("42501");
+
+    // The session's own owner, signed in with only a password (AAL1).
+    const passwordOnly = client();
+    expect(
+      (
+        await passwordOnly.auth.signInWithPassword({
+          email,
+          password: SYNTHETIC_PASSWORD,
+        })
+      ).error
+    ).toBeNull();
+    expect(
+      (await passwordOnly.from("sessions").select().eq("id", session.id)).data
+    ).toEqual([]);
+    expect(
+      (
+        await passwordOnly
+          .from("session_participants")
+          .select("id, display_name, state")
+          .eq("session_id", session.id)
+      ).data
+    ).toEqual([]);
+    expect((await decide(passwordOnly, id, "admit")).error?.code).toBe("42501");
+    expect(
+      (await passwordOnly.rpc("end_session", { p_session: session.id })).error
+        ?.code
+    ).toBe("42501");
 
     const withoutMfa = await confirmedHost();
     expect(
@@ -219,10 +254,38 @@ describe("guest admission", { timeout: 60_000 }, () => {
     const id = await participantId(host, session.id);
     expect((await decide(host, id, "promote")).error?.code).toBe("22023");
 
-    for (let i = 1; i < 100; i++)
+    for (let i = 1; i < 95; i++)
       await guestJoins(session.join_key, `Guest ${i}`);
-    expect((await guestJoins(session.join_key)).joined.error?.message).toBe(
-      "lobby_full"
+    // Ten joins at once against 5 free places: the session lock admits exactly 5.
+    const burst = await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        guestJoins(session.join_key, `Burst ${i}`)
+      )
     );
+    expect(burst.filter(({ joined }) => !joined.error)).toHaveLength(5);
+    expect(
+      burst.filter(({ joined }) => joined.error?.message === "lobby_full")
+    ).toHaveLength(5);
+    const { count } = await host
+      .from("session_participants")
+      .select("id", { count: "exact", head: true })
+      .eq("session_id", session.id)
+      .eq("state", "waiting");
+    expect(count).toBe(100);
+  });
+
+  test("simultaneous identical decisions all succeed with one recorded change", async () => {
+    const { host, session } = await hostWithSession();
+    await guestJoins(session.join_key);
+    const id = await participantId(host, session.id);
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => decide(host, id, "admit"))
+    );
+    for (const { error, data } of results) {
+      expect(error).toBeNull();
+      expect(data.state).toBe("admitted");
+    }
+    // Every reply reports the same single decision time.
+    expect(new Set(results.map(({ data }) => data.decided_at)).size).toBe(1);
   });
 });
