@@ -83,6 +83,8 @@ test("a host restores a returning guest on a new device, during and after the se
 
   // The lobby is closed to new people, but a returning person can still ask.
   await page.getByRole("button", { name: "Close the lobby" }).click();
+  // Wait for the host's action to finish before another browser relies on it.
+  await expect(page.getByRole("status")).toContainText("lobby closed");
   const newDevice = await device(browser);
   await newDevice.page.goto(link);
   await expect(
@@ -123,6 +125,9 @@ test("a host restores a returning guest on a new device, during and after the se
   // After the session ends, a returning person can still be restored.
   await page.getByText("End session…").click();
   await page.getByRole("button", { name: "End session now" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "This session has ended"
+  );
   const laterDevice = await device(browser);
   await laterDevice.page.goto(link);
   await expect(
