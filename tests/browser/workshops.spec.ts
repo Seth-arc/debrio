@@ -176,6 +176,25 @@ test("a host builds, saves, reorders and freezes an agenda, then starts a new dr
   await warning.accept();
 });
 
+test("a create form shown again by Back makes a new workshop, not the earlier one", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await ownerWithWorkspace(page);
+  await page.getByLabel("New workshop title").fill("First");
+  await page.getByLabel("New workshop title").press("Enter");
+  await expect(page.getByRole("heading", { name: "First" })).toBeVisible();
+  const first = page.url();
+  await page.goBack();
+  await page.getByLabel("New workshop title").fill("Second");
+  await page.getByLabel("New workshop title").press("Enter");
+  await expect(page.getByRole("heading", { name: "Second" })).toBeVisible();
+  expect(page.url()).not.toBe(first);
+  await page.getByRole("link", { name: "Back to your workspace" }).click();
+  await expect(page.getByRole("link", { name: "First" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Second" })).toBeVisible();
+});
+
 test("workshop titles are required and bounded", async ({ page }) => {
   test.setTimeout(120_000);
   await ownerWithWorkspace(page);

@@ -5,6 +5,7 @@ import type { Agenda } from "../../../lib/agenda";
 import { isUuid } from "../../../lib/ids";
 import { currentHost } from "../../../lib/supabase";
 import { HostProblem } from "../../host-problem";
+import { OperationField } from "../../operation";
 import { workshopCommand } from "../actions";
 import { AgendaEditor } from "./editor";
 
@@ -44,9 +45,8 @@ function Command({
     <form action={workshopCommand} className="inline">
       <input type="hidden" name="workshop" value={workshop} />
       <input type="hidden" name="command" value={command} />
-      {/* One operation per rendered page: a resubmitted Duplicate returns the same copy. */}
       {command === "duplicate" && (
-        <input type="hidden" name="operation" value={crypto.randomUUID()} />
+        <OperationField initial={crypto.randomUUID()} />
       )}
       <button
         type="submit"
@@ -144,7 +144,7 @@ export default async function Workshop({
         })
       ).data as string[] | null) ?? ["The readiness check is unavailable."])
     : [];
-  const unavailable = (await searchParams).notice === "unavailable";
+  const { notice } = await searchParams;
 
   return (
     <main className="wide">
@@ -155,7 +155,13 @@ export default async function Workshop({
         </Link>
       </p>
       <h1>{workshop.title}</h1>
-      {unavailable && (
+      {notice === "reused" && (
+        <p role="alert">
+          That Duplicate button had already been used, so nothing was copied.
+          Use Duplicate again to make another copy.
+        </p>
+      )}
+      {notice === "unavailable" && (
         <p role="alert">
           The workshop service is unavailable, so nothing was changed. Try
           again.

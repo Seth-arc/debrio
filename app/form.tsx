@@ -1,6 +1,7 @@
 "use client";
 
 import { startTransition, useActionState, useId } from "react";
+import { OperationField } from "./operation";
 
 export type FormState = { error?: string } | null;
 
@@ -40,11 +41,14 @@ export function Form({
   submit,
   fields,
   hidden = {},
+  operation,
 }: {
   action: (state: FormState, data: FormData) => Promise<FormState>;
   submit: string;
   fields: Field[];
   hidden?: Record<string, string>;
+  // Server-made operation id for an idempotent create (see OperationField).
+  operation?: string;
 }) {
   // The server action itself, so the form also submits before scripts load.
   const [state, formAction, pending] = useActionState(action, null);
@@ -62,6 +66,7 @@ export function Form({
       {Object.entries(hidden).map(([name, value]) => (
         <input key={name} type="hidden" name={name} value={value} />
       ))}
+      {operation && <OperationField initial={operation} />}
       {fields.map((field) => {
         const hintId = field.hint ? `${id}-${field.name}-hint` : undefined;
         // An optional yes/no choice: box first, then its label.

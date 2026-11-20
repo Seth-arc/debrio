@@ -37,7 +37,13 @@ export async function createWorkshop(
     p_title: title,
     p_operation: operation,
   });
-  if (error) return { error: UNAVAILABLE };
+  if (error)
+    return {
+      error:
+        error.message === "operation_reused"
+          ? "This form had already been used, so no workshop was created. Reload the page, then create the workshop again."
+          : UNAVAILABLE,
+    };
   redirect(`/workshops/${workshop.id}`);
 }
 
@@ -125,7 +131,10 @@ export async function workshopCommand(data: FormData) {
       "duplicate_workshop",
       { p_workshop: workshopId, p_operation: operation }
     );
-    if (error) redirect(`/workshops/${workshopId}?notice=unavailable`);
+    if (error)
+      redirect(
+        `/workshops/${workshopId}?notice=${error.message === "operation_reused" ? "reused" : "unavailable"}`
+      );
     redirect(`/workshops/${copy.id}`);
   }
   const { error } = await host.supabase.rpc("new_workshop_draft", {

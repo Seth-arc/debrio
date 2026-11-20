@@ -334,6 +334,16 @@ describe("workshop agendas", { timeout: 60_000 }, () => {
       (await host.from("workshops").select("id").like("title", "Copy of %"))
         .data
     ).toHaveLength(1);
+
+    // The same operation used to duplicate a different workshop is refused.
+    expect(
+      (
+        await host.rpc("duplicate_workshop", {
+          p_workshop: copy.data.id,
+          p_operation: operation,
+        })
+      ).error?.message
+    ).toBe("operation_reused");
   });
 
   test("a retried create returns the same workshop, and an operation from another workspace is refused", async () => {
@@ -355,6 +365,26 @@ describe("workshop agendas", { timeout: 60_000 }, () => {
       (await owner.host.from("workshops").select("id").eq("title", "Retried"))
         .data
     ).toHaveLength(1);
+
+    // The same operation with a different request is refused, never answered
+    // with another workshop (a form restored by Back, say).
+    const reused = await owner.host.rpc("create_workshop", {
+      p_title: "Second",
+      p_operation: operation,
+    });
+    expect(reused.error?.message).toBe("operation_reused");
+    expect(
+      (
+        await owner.host.rpc("duplicate_workshop", {
+          p_workshop: owner.workshopId,
+          p_operation: operation,
+        })
+      ).error?.message
+    ).toBe("operation_reused");
+    expect(
+      (await owner.host.from("workshops").select("title").order("created_at"))
+        .data
+    ).toEqual([{ title: "Feedback practice" }, { title: "Retried" }]);
 
     const other = await ownerWithWorkshop();
     expect((await create(other.host)).error?.code).toBe("42501");

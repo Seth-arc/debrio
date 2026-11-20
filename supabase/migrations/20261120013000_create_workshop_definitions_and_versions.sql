@@ -93,6 +93,8 @@ create table public.workshops (
   created_by uuid default auth.uid() references auth.users (id) on delete set null,
   -- The command that created it, so a retried create or duplicate returns it.
   operation_id uuid not null unique,
+  -- The source of a duplicate; with the title, identifies the original request.
+  copied_from uuid references public.workshops (id) on delete restrict,
   created_at timestamptz not null default now()
 );
 create index workshops_workspace on public.workshops (workspace_id);
@@ -291,8 +293,12 @@ end;
 $$;
 
 -- A retried or concurrent request with the same operation gets what the first
--- one created; an operation used in another workspace is refused.
-create function public.workshop_for_operation(p_workspace uuid, p_operation uuid)
+-- one created. The same operation with a different request (a page restored by
+-- Back, say) is refused rather than answered with another workshop, and an
+-- operation used in another workspace is refused.
+create function public.workshop_for_operation(
+  p_workspace uuid, p_operation uuid, p_title text, p_copied_from uuid
+)
 returns public.workshops
 language plpgsql
 stable
@@ -306,6 +312,10 @@ begin
   where w.operation_id = p_operation and w.workspace_id = p_workspace;
   if not found then
     raise exception 'not_allowed' using errcode = '42501';
+  end if;
+  if v_workshop.title is distinct from p_title
+    or v_workshop.copied_from is distinct from p_copied_from then
+    raise exception 'operation_reused' using errcode = 'P0001';
   end if;
   return v_workshop;
 end;
@@ -330,7 +340,7 @@ begin
   on conflict (operation_id) do nothing
   returning * into v_workshop;
   if not found then
-    return public.workshop_for_operation(v_workspace, p_operation);
+    return public.workshop_for_operation(v_workspace, p_operation, p_title, null);
   end if;
   insert into public.workshop_versions (workshop_id, number) values (v_workshop.id, 1);
   return v_workshop;
@@ -421,14 +431,15 @@ set search_path = ''
 as $$
 declare
   v_source public.workshops := public.require_owned_workshop(p_workshop);
+  v_title text := rtrim(left('Copy of ' || v_source.title, 120));
   v_copy public.workshops;
 begin
-  insert into public.workshops (workspace_id, title, operation_id)
-  values (v_source.workspace_id, rtrim(left('Copy of ' || v_source.title, 120)), p_operation)
+  insert into public.workshops (workspace_id, title, operation_id, copied_from)
+  values (v_source.workspace_id, v_title, p_operation, v_source.id)
   on conflict (operation_id) do nothing
   returning * into v_copy;
   if not found then
-    return public.workshop_for_operation(v_source.workspace_id, p_operation);
+    return public.workshop_for_operation(v_source.workspace_id, p_operation, v_title, v_source.id);
   end if;
   insert into public.workshop_versions (workshop_id, number, content)
   select v_copy.id, 1, v.content
@@ -447,7 +458,7 @@ revoke all on function
   public.workshop_problems(jsonb),
   public.require_owned_workshop(uuid),
   public.lock_current_draft(uuid, integer),
-  public.workshop_for_operation(uuid, uuid),
+  public.workshop_for_operation(uuid, uuid, text, uuid),
   public.create_workshop(text, uuid),
   public.save_workshop_draft(uuid, integer, jsonb),
   public.mark_workshop_ready(uuid, integer),
