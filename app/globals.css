@@ -180,3 +180,57 @@ select {
   color: inherit;
   font: inherit;
 }
+
+main.wide {
+  max-width: 52rem;
+}
+
+textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 2px solid #6b766f;
+  border-radius: 6px;
+  background: #fffefb;
+  color: inherit;
+  font: inherit;
+}
+
+textarea:focus-visible,
+select:focus-visible {
+  outline: 3px solid #28553e;
+  outline-offset: 4px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.5rem 1rem;
+}
+
+fieldset {
+  border: 1px solid #b9c1bb;
+  border-radius: 6px;
+  margin-block: 1rem;
+}
+
+fieldset.activity {
+  padding: 1rem;
+}
+
+legend {
+  font-weight: 700;
+}
+
+.sticky {
+  position: sticky;
+  bottom: 0;
+  background: #f6f4ee;
+  padding-block: 0.75rem;
+  align-items: center;
+}
+
+.instructions {
+  white-space: pre-wrap;
+}

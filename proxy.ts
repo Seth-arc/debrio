@@ -31,5 +31,6 @@ export const config = {
     "/mfa/:path*",
     "/account/:path*",
     "/sessions/:path*",
+    "/workshops/:path*",
   ],
 };

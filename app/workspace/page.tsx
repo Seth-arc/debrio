@@ -7,6 +7,7 @@ import { Form } from "../form";
 import { HostProblem } from "../host-problem";
 import { EnrollAuthenticator } from "../mfa/enroll";
 import { createSession } from "../sessions/actions";
+import { createWorkshop } from "../workshops/actions";
 import { createWorkspace } from "./actions";
 
 // Identity is per request; never prerender.
@@ -67,10 +68,16 @@ export default async function Workspace() {
         {signOutForm}
       </main>
     );
-  const { data: sessions } = await host.supabase
-    .from("sessions")
-    .select("id, title, state")
-    .order("created_at", { ascending: false });
+  const [{ data: sessions }, { data: workshops }] = await Promise.all([
+    host.supabase
+      .from("sessions")
+      .select("id, title, state")
+      .order("created_at", { ascending: false }),
+    host.supabase
+      .from("workshops")
+      .select("id, title")
+      .order("created_at", { ascending: false }),
+  ]);
   return (
     <main>
       <p className="wordmark">Debrio</p>
@@ -78,6 +85,36 @@ export default async function Workspace() {
       <p>
         You own this workspace. Signed in as <strong>{host.user.email}</strong>.
       </p>
+      <section aria-labelledby="workshops-heading">
+        <h2 id="workshops-heading">Workshops</h2>
+        {workshops === null ? (
+          <p role="status">
+            Workshops couldn&apos;t be loaded. Reload to try again.
+          </p>
+        ) : workshops.length === 0 ? (
+          <p>No workshops yet. A workshop is a reusable agenda you can run.</p>
+        ) : (
+          <ul>
+            {workshops.map((workshop) => (
+              <li key={workshop.id}>
+                <Link href={`/workshops/${workshop.id}`}>{workshop.title}</Link>
+              </li>
+            ))}
+          </ul>
+        )}
+        <Form
+          action={createWorkshop}
+          submit="Create workshop"
+          operation={crypto.randomUUID()}
+          fields={[
+            {
+              name: "title",
+              label: "New workshop title",
+              maxLength: 120,
+            },
+          ]}
+        />
+      </section>
       <section aria-labelledby="sessions-heading">
         <h2 id="sessions-heading">Sessions</h2>
         {sessions === null ? (
