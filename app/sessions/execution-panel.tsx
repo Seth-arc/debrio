@@ -119,6 +119,7 @@ export function ExecutionPanel({
         Session activities
       </h2>
       <p>Instructions-only execution. Answers are not collected here.</p>
+      {!host && <p>Host availability is unknown.</p>}
       <p role="status">
         {stale
           ? "Connection problem. Session state is unavailable; controls are paused."

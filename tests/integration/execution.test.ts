@@ -1,5 +1,6 @@
 ﻿import { sql } from "../support/database";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   agenda,
@@ -317,14 +318,19 @@ describe("non-media session execution", { timeout: 60_000 }, () => {
       returning: true,
     });
     const request = await participantId(x.host, x.sessionId);
-    expect(
-      (
-        await x.host.rpc("restore_participant", {
-          p_request: request,
-          p_target: person,
-        })
-      ).error
-    ).toBeNull();
+    const [restored, racingRead] = await Promise.all([
+      x.host.rpc("restore_participant", {
+        p_request: request,
+        p_target: person,
+      }),
+      get(),
+    ]);
+    expect(restored.error).toBeNull();
+    // A read begun before rotation may finish; later reads must reject the old credential.
+    expect(racingRead.error).toBeNull();
+    expect(racingRead.data === null || racingRead.data.current === null).toBe(
+      true
+    );
     expect((await status(x.sessionId, guest.hash))[0].participant_state).toBe(
       "moved"
     );
@@ -337,6 +343,74 @@ describe("non-media session execution", { timeout: 60_000 }, () => {
         })
       ).data.state
     ).toBe("completed");
+  });
+
+  test("AC7: due boundary and a manual end waiting across the deadline keep the original end", async () => {
+    const x = await executionHost();
+    await command(x.host, x.sessionId, 1, "start");
+    for (const [offset, expected] of [
+      ["1 minute", "live"],
+      ["0 seconds", "completed"],
+      ["-1 second", "completed"],
+    ]) {
+      sql(
+        `alter table public.session_execution disable trigger execution_identity_frozen; update public.session_execution set started_at=statement_timestamp()+interval '${offset}'-interval '4 hours',deadline=statement_timestamp()+interval '${offset}' where session_id='${x.sessionId}'; alter table public.session_execution enable trigger execution_identity_frozen;`
+      );
+      expect((await snapshot(x.host, x.sessionId)).state).toBe(expected);
+    }
+    expect(sql("select public.expire_executions();")).toBe("1");
+    const raced = await executionHost();
+    await command(raced.host, raced.sessionId, 1, "start");
+    sql(
+      `alter table public.session_execution disable trigger execution_identity_frozen; update public.session_execution set started_at=statement_timestamp()-interval '4 hours'+interval '3 seconds',deadline=statement_timestamp()+interval '3 seconds' where session_id='${raced.sessionId}'; alter table public.session_execution enable trigger execution_identity_frozen;`
+    );
+    const holder = spawn("docker", [
+      "compose",
+      "exec",
+      "-T",
+      "db",
+      "psql",
+      "-U",
+      "postgres",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At",
+      "-q",
+    ]);
+    const acquired = new Promise<void>((resolve, reject) => {
+      holder.stdout.on("data", (data: Buffer) => {
+        if (data.toString().includes("SESSION_LOCKED")) resolve();
+      });
+      holder.once("error", reject);
+      holder.once("exit", () =>
+        reject(new Error("Session lock ended before acquisition"))
+      );
+    });
+    const released = new Promise<number | null>((resolve) =>
+      holder.once("exit", resolve)
+    );
+    holder.stdin.end(
+      `begin; select id from public.sessions where id='${raced.sessionId}' for update; select 'SESSION_LOCKED'; select pg_sleep(4); commit;`
+    );
+    await acquired;
+    expect((await snapshot(raced.host, raced.sessionId)).state).toBe("live");
+    const ended = await command(raced.host, raced.sessionId, 2, "end");
+    expect(await released).toBe(0);
+    expect(ended.error).toBeNull();
+    expect(ended.data).toEqual({ ended: true });
+    const final = await snapshot(raced.host, raced.sessionId);
+    expect(final.state).toBe("completed");
+    expect(final.ended_at).toBe(final.deadline);
+    expect(final.completed_count).toBe(0);
+    expect(
+      sql(
+        `select end_reason from public.session_execution where session_id='${raced.sessionId}';`
+      )
+    ).toBe("deadline");
+    expect(sql("select public.expire_executions();")).toBe("0");
+    expect((await snapshot(raced.host, raced.sessionId)).ended_at).toBe(
+      final.ended_at
+    );
   });
 
   test("AC8/10/12: real permissions, legacy compatibility, no public capacity or sweep access", async () => {

@@ -108,7 +108,10 @@ export default async function GuestSession({
         ([state]) => state === place.participant_state
       )?.[1] ?? PLACES.removed;
     heading = shown.heading;
-    text = shown.text(place.display_name);
+    text =
+      execution && place.participant_state === "admitted"
+        ? `Welcome, ${place.display_name}. Your place is on this device.`
+        : shown.text(place.display_name);
     refresh =
       place.participant_state === "waiting" ||
       place.participant_state === "admitted";

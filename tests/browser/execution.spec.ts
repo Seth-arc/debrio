@@ -97,6 +97,10 @@ test("AC1–12: host confirms an agenda, guest follows one task, conflicting pre
   await page.getByRole("button", { name: "Preview start" }).click();
   await page.getByRole("button", { name: "Confirm start" }).click();
   await expect(guest.getByRole("heading", { name: "Task 1" })).toBeVisible();
+  await expect(guest.getByText("Host availability is unknown.")).toBeVisible();
+  await expect(
+    guest.getByText(/facilitator will start the session soon/)
+  ).toHaveCount(0);
   await expect(guest.getByText("Consider example 2 privately.")).toHaveCount(0);
   await expect(guest.getByRole("textbox")).toHaveCount(0);
   await expectAccessible(page);
