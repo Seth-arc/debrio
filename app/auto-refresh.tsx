@@ -8,7 +8,10 @@ import { useEffect } from "react";
 export function AutoRefresh({ seconds }: { seconds: number }) {
   const router = useRouter();
   useEffect(() => {
-    const timer = setInterval(() => router.refresh(), seconds * 1000);
+    const timer = setInterval(() => {
+      // A refresh must not interrupt a command's pending server-action response.
+      if (!document.querySelector('[data-pending="true"]')) router.refresh();
+    }, seconds * 1000);
     return () => clearInterval(timer);
   }, [router, seconds]);
   return null;

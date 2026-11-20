@@ -8,6 +8,8 @@ import {
 import { guestSupabase } from "../../../lib/supabase";
 import { AutoRefresh } from "../../auto-refresh";
 import { HostProblem } from "../../host-problem";
+import type { Execution } from "../../../lib/execution";
+import { ExecutionPanel } from "../../sessions/execution-panel";
 
 // A guest's place in a session, checked against the database on every request.
 export const dynamic = "force-dynamic";
@@ -68,6 +70,16 @@ export default async function GuestSession({
         }[]
       | null
   )?.[0];
+  const executionResult =
+    credential &&
+    place?.participant_state === "admitted" &&
+    place.session_state === "open"
+      ? await guest.rpc("guest_execution", {
+          p_session: sessionId,
+          p_credential_hash: credentialHash(credential),
+        })
+      : null;
+  const execution = executionResult?.data as Execution | null;
 
   let heading: string;
   let text: string;
@@ -107,6 +119,10 @@ export default async function GuestSession({
       {place && <p>{place.session_title}</p>}
       <h1>{heading}</h1>
       <p role="status">{text}</p>
+      {execution && <ExecutionPanel initial={execution} />}
+      {executionResult?.error && (
+        <p role="alert">The current activity is unavailable. Retrying…</p>
+      )}
       {refresh && <AutoRefresh seconds={3} />}
     </main>
   );

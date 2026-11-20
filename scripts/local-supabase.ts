@@ -24,6 +24,12 @@ export const LOCAL_ANON_KEY = signLocalJwt({
 export const localSupabaseEnv = {
   SUPABASE_URL: LOCAL_SUPABASE_URL,
   SUPABASE_ANON_KEY: LOCAL_ANON_KEY,
+  SUPABASE_SERVICE_ROLE_KEY: signLocalJwt({
+    role: "service_role",
+    iss: "debrio-local",
+    iat: 1795000000,
+  }),
+  EXECUTION_DISPATCH_SECRET: "local-synthetic-execution-dispatch-only-0001",
 };
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
