@@ -45,6 +45,7 @@ export default async function Join({
       title: string;
       state: string;
       locked: boolean;
+      can_return: boolean;
     }[]
   )[0];
   if (!session)
@@ -53,10 +54,6 @@ export default async function Join({
         heading="This link doesn't work"
         text="It may have been replaced. Ask your host for the current session link."
       />
-    );
-  if (session.state === "ended")
-    return (
-      <Closed heading="This session has ended" text="Thanks for coming." />
     );
 
   // The same browser already asked and is waiting or in: carry on there.
@@ -68,12 +65,43 @@ export default async function Join({
     )
   )
     redirect(`/s/${session.id}`);
-  if (session.locked)
+
+  const nameField = {
+    name: "name",
+    label: "Your name",
+    autoComplete: "name",
+    maxLength: 60,
+    hint: "How you'd like to appear to the host and others.",
+  };
+  // A closed lobby or an ended session still lets someone who was already in
+  // ask the host to restore their place.
+  const returnOnly =
+    session.state === "ended" ? session.can_return : session.locked;
+  if (session.state === "ended" && !returnOnly)
     return (
-      <Closed
-        heading={`The lobby for ${session.title} is closed`}
-        text="The host has closed the lobby for now. Try again shortly."
-      />
+      <Closed heading="This session has ended" text="Thanks for coming." />
+    );
+  if (returnOnly)
+    return (
+      <main>
+        <p className="wordmark">Debrio</p>
+        <h1>
+          {session.state === "ended"
+            ? "This session has ended"
+            : `The lobby for ${session.title} is closed`}
+        </h1>
+        <p>
+          If you were already in {session.title} and lost your place, for
+          example by changing devices, ask the host to restore it. New people
+          can&apos;t join right now.
+        </p>
+        <Form
+          action={requestAdmission}
+          submit="Ask the host to restore my place"
+          hidden={{ key, returning: "yes" }}
+          fields={[nameField]}
+        />
+      </main>
     );
 
   return (
@@ -89,12 +117,12 @@ export default async function Join({
         submit="Ask to join"
         hidden={{ key }}
         fields={[
+          nameField,
           {
-            name: "name",
-            label: "Your name",
-            autoComplete: "name",
-            maxLength: 60,
-            hint: "How you'd like to appear to the host and others.",
+            name: "returning",
+            label: "I was already in this session",
+            type: "checkbox",
+            hint: "For example, if you changed devices. The host will restore your place.",
           },
         ]}
       />

@@ -18,14 +18,67 @@ const NOTICES = {
     "Someone's status changed before your action arrived. The list below is current.",
   unavailable:
     "The session service is unavailable, so nothing was changed. Try again.",
+  "restore-target":
+    "That place can't be restored any more: the person you chose is no longer in the session. Choose someone else or admit them as new.",
 };
 
 type Participant = {
   id: string;
   display_name: string;
   state: string;
+  is_return: boolean;
   requested_at: string;
+  account_email: string | null;
 };
+
+// Shown next to a name so the host can verify who is asking; never a login.
+function Evidence({ person }: { person: Participant }) {
+  return (
+    <>
+      {person.is_return && <span className="tag">Returning</span>}
+      {person.account_email && (
+        <span className="hint">signed in as {person.account_email}</span>
+      )}
+    </>
+  );
+}
+
+// The host picks which existing identity a verified returning person gets back.
+function Restore({
+  session,
+  person,
+  admitted,
+}: {
+  session: string;
+  person: Participant;
+  admitted: Participant[];
+}) {
+  const fieldId = `restore-${person.id}`;
+  return (
+    <form action={updateSession} className="inline restore">
+      <input type="hidden" name="session" value={session} />
+      <input type="hidden" name="command" value="restore" />
+      <input type="hidden" name="participant" value={person.id} />
+      <label htmlFor={fieldId}>Restore {person.display_name} as</label>
+      <select id={fieldId} name="target" required>
+        {admitted.map((place) => (
+          <option key={place.id} value={place.id}>
+            {place.display_name} (joined{" "}
+            {new Date(place.requested_at).toLocaleString("en-GB", {
+              day: "numeric",
+              month: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+              timeZone: "UTC",
+            })}{" "}
+            UTC)
+          </option>
+        ))}
+      </select>
+      <button type="submit">Restore</button>
+    </form>
+  );
+}
 
 function Command({
   session,
@@ -79,13 +132,9 @@ export default async function HostSession({
       .select("id, title, state, locked, join_key")
       .eq("id", id)
       .maybeSingle(),
-    host.supabase
-      .from("session_participants")
-      .select("id, display_name, state, requested_at")
-      .eq("session_id", id)
-      .order("requested_at"),
+    host.supabase.rpc("session_people", { p_session: id }),
   ]);
-  if (sessionResult.error || peopleResult.error)
+  if (sessionResult.error || (sessionResult.data && peopleResult.error))
     return (
       <main>
         <p className="wordmark">Debrio</p>
@@ -96,7 +145,7 @@ export default async function HostSession({
     );
   const session = sessionResult.data;
   if (!session) notFound();
-  const people = peopleResult.data as Participant[];
+  const people = (peopleResult.data ?? []) as Participant[];
   const waiting = people.filter(({ state }) => state === "waiting");
   const admitted = people.filter(({ state }) => state === "admitted");
   const { notice: noticeKey } = await searchParams;
@@ -106,6 +155,13 @@ export default async function HostSession({
   const request = await headers();
   const link = `${request.get("x-forwarded-proto") ?? "http"}://${request.get("host")}/join/${session.join_key}`;
   const open = session.state === "open";
+  // The database decides whether returning requests are still possible.
+  const { data: joinable } = await host.supabase.rpc("session_for_join", {
+    p_key: session.join_key,
+  });
+  const reviewOpen = Boolean(
+    (joinable as { can_return: boolean }[] | null)?.[0]?.can_return
+  );
 
   return (
     <main>
@@ -119,7 +175,11 @@ export default async function HostSession({
           ? `${waiting.length} waiting · ${admitted.length} in the session · lobby ${
               session.locked ? "closed" : "open"
             }`
-          : "This session has ended."}
+          : `This session has ended.${
+              waiting.length > 0
+                ? ` ${waiting.length} waiting to be restored.`
+                : ""
+            }`}
       </p>
       {notice && <p role="alert">{notice}</p>}
 
@@ -152,16 +212,30 @@ export default async function HostSession({
             {waiting.map((person) => (
               <li key={person.id}>
                 <span>{person.display_name}</span>
-                {open && (
-                  <span className="actions">
+                <Evidence person={person} />
+                <span className="actions">
+                  {person.is_return && admitted.length > 0 && (
+                    <Restore
+                      session={session.id}
+                      person={person}
+                      admitted={admitted}
+                    />
+                  )}
+                  {open && (
                     <Command
                       session={session.id}
                       command="admit"
                       participant={person.id}
-                      label={`Admit ${person.display_name}`}
+                      label={
+                        person.is_return
+                          ? `Admit as new: ${person.display_name}`
+                          : `Admit ${person.display_name}`
+                      }
                     >
-                      Admit
+                      {person.is_return ? "Admit as new" : "Admit"}
                     </Command>
+                  )}
+                  {(open || person.is_return) && (
                     <Command
                       session={session.id}
                       command="deny"
@@ -171,8 +245,8 @@ export default async function HostSession({
                     >
                       Deny
                     </Command>
-                  </span>
-                )}
+                  )}
+                </span>
               </li>
             ))}
           </ul>
@@ -188,6 +262,7 @@ export default async function HostSession({
             {admitted.map((person) => (
               <li key={person.id}>
                 <span>{person.display_name}</span>
+                <Evidence person={person} />
                 {open && (
                   <Command
                     session={session.id}
@@ -217,7 +292,8 @@ export default async function HostSession({
           </Command>
         </details>
       )}
-      {open && <AutoRefresh seconds={3} />}
+      {/* Returning requests can arrive after the end, within the 90 days. */}
+      {(open || reviewOpen) && <AutoRefresh seconds={3} />}
     </main>
   );
 }

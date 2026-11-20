@@ -41,34 +41,43 @@ export async function createSession(
 // One action for every button on the host's session page. Each command maps
 // to one owner-checked database function; anything else is ignored.
 type Call = { fn: string; args: Record<string, unknown> };
-const COMMANDS: Record<string, (session: string, participant: string) => Call> =
-  {
-    lock: (session) => ({
-      fn: "set_session_locked",
-      args: { p_session: session, p_locked: true },
-    }),
-    unlock: (session) => ({
-      fn: "set_session_locked",
-      args: { p_session: session, p_locked: false },
-    }),
-    replace: (session) => ({
-      fn: "replace_join_key",
-      args: { p_session: session },
-    }),
-    end: (session) => ({ fn: "end_session", args: { p_session: session } }),
-    admit: (_, participant) => decision(participant, "admit"),
-    deny: (_, participant) => decision(participant, "deny"),
-    remove: (_, participant) => decision(participant, "remove"),
-  };
-function decision(participant: string, choice: string): Call {
-  return {
+const decision =
+  (choice: string) =>
+  (_: string, data: FormData): Call => ({
     fn: "decide_participant",
-    args: { p_participant: participant, p_decision: choice },
-  };
-}
+    args: { p_participant: text(data, "participant"), p_decision: choice },
+  });
+const COMMANDS: Record<string, (session: string, data: FormData) => Call> = {
+  lock: (session) => ({
+    fn: "set_session_locked",
+    args: { p_session: session, p_locked: true },
+  }),
+  unlock: (session) => ({
+    fn: "set_session_locked",
+    args: { p_session: session, p_locked: false },
+  }),
+  replace: (session) => ({
+    fn: "replace_join_key",
+    args: { p_session: session },
+  }),
+  end: (session) => ({ fn: "end_session", args: { p_session: session } }),
+  admit: decision("admit"),
+  deny: decision("deny"),
+  remove: decision("remove"),
+  // The host has verified the person and chosen which identity to restore.
+  restore: (_, data) => ({
+    fn: "restore_participant",
+    args: {
+      p_request: text(data, "participant"),
+      p_target: text(data, "target"),
+    },
+  }),
+};
 const NOTICES = {
   session_ended: "ended",
   invalid_transition: "changed",
+  not_a_return_request: "changed",
+  cannot_restore_into: "restore-target",
 };
 
 export async function updateSession(data: FormData) {
@@ -81,7 +90,7 @@ export async function updateSession(data: FormData) {
     ([name]) => name === command
   )?.[1];
   if (!build) redirect(`/sessions/${sessionId}`);
-  const call = build(sessionId, text(data, "participant"));
+  const call = build(sessionId, data);
   const { error } = await host.supabase.rpc(call.fn, call.args);
   if (error)
     redirect(
