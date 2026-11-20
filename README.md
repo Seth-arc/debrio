@@ -1,6 +1,53 @@
 # Debrio
 
-Next.js application with host sign-in (email + password plus an authenticator app) and a personal workspace, backed by Supabase, plus an opt-in synthetic LiveKit media probe. Hosts can reset a forgotten password (email link plus authenticator) and change their password or email after a fresh authenticator code; email changes need confirmation from both addresses. Owners can create a session and share its join link: guests ask to join with just a name and wait in a lobby, and the host admits, denies or removes them, closes the lobby, replaces the link or ends the session. Guests need no account; their private credential stays in an HttpOnly cookie and the database stores only its hash. A guest who changes or loses a device asks again as a returning person (also while the lobby is closed, or within 90 days after the session ends); the host verifies them and restores their existing place, and the old device is told its place moved. Joining while signed in shows the account to the host as evidence but grants nothing. Owners can build reusable workshop agendas: objectives and ordered activities with instructions, individual or group scope, planned minutes, labelled answer fields and links to an earlier activity's answer. "Mark ready to run" freezes a validated version (the database enforces both the agenda's structure and its readiness); later edits start a new draft, and workshops can be duplicated. Running an agenda in a session, the operator's authenticator reset and media authorization are not implemented yet.
+## Agenda execution (instructions only)
+
+A ready version can prepare a lobby without starting a session. The host previews
+and confirms Start, can pause/resume the activity timer, preview/confirm the next
+activity, and explicitly end. Only individual activities without prior-answer
+inputs can run in this slice. Expected answer labels are guidance; answers are not
+collected. Groups, linked answers, live overrides and media are not enabled.
+
+Execution is stored separately from admission. The selected ready version and
+four-hour deadline cannot change. Activity timer expiry only prompts. The database
+serializes starts against three live/paused sessions per workspace and a separate
+finite global budget. Prepared lobbies and effectively ended sessions do not count.
+Existing admission-only sessions remain usable and cannot enter execution without
+a ready-version binding. A new ready version requires a new prepared session.
+
+Hosting starts are disabled by default: the migration does not create capacity or
+eligibility grants. Integration/browser fixtures provision synthetic grants only
+in the disposable local database. Before hosted use, the operator must verify
+hosting eligibility, aggregate headroom, account allowances and scheduling, then
+provision finite, expiring `execution_capacity` and workspace
+`execution_eligibility` rows through privileged administration. Users cannot write
+these tables. No production capacity or provider qualification is claimed.
+
+`POST /api/execution/expire` materializes up to 100 due session ends per call. It
+requires `Authorization: Bearer <EXECUTION_DISPATCH_SECRET>` (at least 32 random
+characters), server-only `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_URL`. Missing
+configuration returns 503; missing/invalid dispatch authorization returns 401.
+The accepted hosted dispatch path is Supabase Cron/pg_net to this bounded handler,
+with the dispatch secret in Vault. Configure and verify its cadence/allowance
+before enabling hosted starts; no schedule is installed by this change. Repeated
+calls are safe. Alert on scheduler failure or backlog and keep new hosted starts
+closed while headroom is unverified.
+
+Every access/command still enforces the original deadline if the dispatcher is
+down. Delayed cleanup stores the effective deadline as the end, preserving the
+90-day review clock. The worker does not submit answers or call media providers.
+Current-task polling uses authorized server reads; client clocks do not authorize
+actions. A lost command response retains its operation ID for safe retry.
+
+The additive migration preserves old session IDs, admission states and credentials.
+Old admission clients cannot close a bound execution through the legacy end RPC;
+they must reload and use its versioned execution controls. Before deployment,
+drain incompatible old clients as required by the release workflow. App rollback
+does not reverse the migration or erase execution state; keep hosted starts
+disabled and retain the expiry dispatcher/access boundary until a compatible
+application is restored.
+
+Next.js application with host sign-in (email + password plus an authenticator app) and a personal workspace, backed by Supabase, plus an opt-in synthetic LiveKit media probe. Hosts can reset a forgotten password (email link plus authenticator) and change their password or email after a fresh authenticator code; email changes need confirmation from both addresses. Owners can create a session and share its join link: guests ask to join with just a name and wait in a lobby, and the host admits, denies or removes them, closes the lobby, replaces the link or ends the session. Guests need no account; their private credential stays in an HttpOnly cookie and the database stores only its hash. A guest who changes or loses a device asks again as a returning person (also while the lobby is closed, or within 90 days after the session ends); the host verifies them and restores their existing place, and the old device is told its place moved. Joining while signed in shows the account to the host as evidence but grants nothing. Owners can build reusable workshop agendas: objectives and ordered activities with instructions, individual or group scope, planned minutes, labelled answer fields and links to an earlier activity's answer. "Mark ready to run" freezes a validated version (the database enforces both the agenda's structure and its readiness); later edits start a new draft, and workshops can be duplicated. Individual, unlinked agendas support the instructions-only execution described above. The operator's authenticator reset and media authorization are not implemented yet.
 
 ## Run locally
 

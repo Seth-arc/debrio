@@ -8,6 +8,8 @@ import { HostProblem } from "../../host-problem";
 import { OperationField } from "../../operation";
 import { workshopCommand } from "../actions";
 import { AgendaEditor } from "./editor";
+import { Form } from "../../form";
+import { prepareSession } from "../../sessions/execution-actions";
 
 // Reads are limited by row policies; never prerender.
 export const dynamic = "force-dynamic";
@@ -207,6 +209,17 @@ export default async function Workshop({
               {version.state === "ready"
                 ? `ready to run since ${when(version.ready_at ?? version.updated_at)}`
                 : `draft, last saved ${when(version.updated_at)}`}
+              {version.state === "ready" && (
+                <div data-leave="">
+                  <Form
+                    action={prepareSession}
+                    fields={[]}
+                    hidden={{ version: version.id }}
+                    operation={crypto.randomUUID()}
+                    submit={`Prepare session from version ${version.number}`}
+                  />
+                </div>
+              )}
             </li>
           ))}
         </ul>

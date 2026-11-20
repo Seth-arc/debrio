@@ -7,6 +7,9 @@ import { currentHost } from "../../../lib/supabase";
 import { AutoRefresh } from "../../auto-refresh";
 import { HostProblem } from "../../host-problem";
 import { updateSession } from "../actions";
+import type { Execution } from "../../../lib/execution";
+import { ExecutionPanel } from "../execution-panel";
+import { CommandButton } from "../command-button";
 
 // The host's live view of one session; reads are limited by row policies.
 export const dynamic = "force-dynamic";
@@ -75,7 +78,7 @@ function Restore({
           </option>
         ))}
       </select>
-      <button type="submit">Restore</button>
+      <CommandButton>Restore</CommandButton>
     </form>
   );
 }
@@ -102,13 +105,9 @@ function Command({
       {participant && (
         <input type="hidden" name="participant" value={participant} />
       )}
-      <button
-        type="submit"
-        aria-label={label}
-        className={secondary ? "secondary" : undefined}
-      >
+      <CommandButton label={label} secondary={secondary}>
         {children}
-      </button>
+      </CommandButton>
     </form>
   );
 }
@@ -126,15 +125,19 @@ export default async function HostSession({
   if (host.state === "aal1") redirect("/mfa");
   if (host.state !== "aal2") return <HostProblem state={host.state} />;
   if (!isSessionId(id)) notFound();
-  const [sessionResult, peopleResult] = await Promise.all([
+  const [sessionResult, peopleResult, executionResult] = await Promise.all([
     host.supabase
       .from("sessions")
       .select("id, title, state, locked, join_key")
       .eq("id", id)
       .maybeSingle(),
     host.supabase.rpc("session_people", { p_session: id }),
+    host.supabase.rpc("host_execution", { p_session: id }),
   ]);
-  if (sessionResult.error || (sessionResult.data && peopleResult.error))
+  if (
+    sessionResult.error ||
+    (sessionResult.data && (peopleResult.error || executionResult.error))
+  )
     return (
       <main>
         <p className="wordmark">Debrio</p>
@@ -154,7 +157,8 @@ export default async function HostSession({
   )?.[1];
   const request = await headers();
   const link = `${request.get("x-forwarded-proto") ?? "http"}://${request.get("host")}/join/${session.join_key}`;
-  const open = session.state === "open";
+  const execution = executionResult.data as Execution | null;
+  const open = session.state === "open" && execution?.state !== "completed";
   // The database decides whether returning requests are still possible.
   const { data: joinable } = await host.supabase.rpc("session_for_join", {
     p_key: session.join_key,
@@ -182,6 +186,7 @@ export default async function HostSession({
             }`}
       </p>
       {notice && <p role="alert">{notice}</p>}
+      {execution && <ExecutionPanel initial={execution} host />}
 
       {open && (
         <section aria-labelledby="link-heading">
@@ -280,7 +285,7 @@ export default async function HostSession({
         )}
       </section>
 
-      {open && (
+      {open && !execution && (
         <details>
           <summary>End session…</summary>
           <p>
