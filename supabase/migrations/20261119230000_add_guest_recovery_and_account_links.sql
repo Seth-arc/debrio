@@ -11,10 +11,11 @@ alter table public.session_participants
   drop constraint session_participants_state_check,
   add constraint session_participants_state_check
     check (state in ('waiting', 'admitted', 'denied', 'removed', 'restored')),
-  -- A restored request handed its credential to the identity it was merged into.
-  add constraint session_participants_restored_check check (
-    (state = 'restored') = (credential_hash is null and restored_into is not null)
-  );
+  -- Only a restored request has no credential (it was handed over) and a target.
+  add constraint session_participants_credential_check
+    check ((state = 'restored') = (credential_hash is null)),
+  add constraint session_participants_restored_into_check
+    check ((state = 'restored') = (restored_into is not null));
 
 -- Credentials replaced by a restore. Never accepted again; recognised only so the
 -- old device can be told its place moved.
@@ -26,12 +27,18 @@ create table public.participant_retired_credentials (
 alter table public.participant_retired_credentials enable row level security;
 revoke all on public.participant_retired_credentials from public, anon, authenticated;
 
--- Hosts may also read the new columns (still never the credential hash).
-grant select (is_return, account_id, restored_into)
-  on public.session_participants to authenticated;
+-- One definition of the review period after a session ends (PRD session retention).
+create function public.within_review_window(p_ended_at timestamptz)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select p_ended_at is null or p_ended_at > now() - interval '90 days';
+$$;
 
 -- Joining is reachable by a returning person while the lobby is closed and
--- after the session ends (within its 90-day window); new people are not.
+-- after the session ends (within its review window); new people are not.
 drop function public.session_for_join(text);
 create function public.session_for_join(p_key text)
 returns table (id uuid, title text, state text, locked boolean, can_return boolean)
@@ -40,8 +47,7 @@ stable
 security definer
 set search_path = ''
 as $$
-  select s.id, s.title, s.state, s.locked,
-    s.ended_at is null or s.ended_at > now() - interval '90 days'
+  select s.id, s.title, s.state, s.locked, public.within_review_window(s.ended_at)
   from public.sessions s
   where s.join_key = p_key;
 $$;
@@ -63,12 +69,19 @@ as $$
 declare
   v_session public.sessions;
 begin
+  -- Every request carries a fresh credential; a retired one is never accepted again.
+  if p_credential_hash is null or exists (
+    select 1 from public.participant_retired_credentials r
+    where r.credential_hash = p_credential_hash
+  ) then
+    raise exception 'invalid_credential' using errcode = '22023';
+  end if;
   select s.* into v_session from public.sessions s where s.join_key = p_key for update;
   if not found then
     raise exception 'unknown_link' using errcode = 'P0001';
   end if;
   if v_session.state <> 'open'
-    and not (p_returning and v_session.ended_at > now() - interval '90 days') then
+    and not (p_returning and public.within_review_window(v_session.ended_at)) then
     raise exception 'session_ended' using errcode = 'P0001';
   end if;
   if v_session.locked and not p_returning then
@@ -89,7 +102,33 @@ begin
 end;
 $$;
 
--- Ended sessions accept only one decision: denying a returning request.
+-- Ending a session turns away anyone still waiting to be let in as new; only
+-- returning requests may still be decided afterwards.
+create or replace function public.end_session(p_session uuid)
+returns public.sessions
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_session public.sessions := public.require_owned_session(p_session);
+begin
+  update public.sessions set state = 'ended', ended_at = now()
+  where id = p_session and state = 'open'
+  returning * into v_session;
+  -- Ending twice is a no-op that returns the already-ended session.
+  if not found then
+    return public.require_owned_session(p_session);
+  end if;
+  update public.session_participants
+  set state = 'denied', decided_at = now(), decided_by = auth.uid()
+  where session_id = p_session and state = 'waiting' and not is_return;
+  return v_session;
+end;
+$$;
+
+-- Ended sessions accept only one decision: denying a returning request within
+-- the review window.
 create or replace function public.decide_participant(p_participant uuid, p_decision text)
 returns public.session_participants
 language plpgsql
@@ -112,8 +151,10 @@ begin
   if v_target is null then
     raise exception 'unknown_decision' using errcode = '22023';
   end if;
-  if v_session.state <> 'open'
-    and not (p_decision = 'deny' and v_participant.is_return) then
+  if v_session.state <> 'open' and not (
+    p_decision = 'deny' and v_participant.is_return
+    and public.within_review_window(v_session.ended_at)
+  ) then
     raise exception 'session_ended' using errcode = 'P0001';
   end if;
   update public.session_participants
@@ -158,7 +199,7 @@ begin
   if v_target.session_id <> v_request.session_id then
     raise exception 'not_allowed' using errcode = '42501';
   end if;
-  if v_session.ended_at < now() - interval '90 days' then
+  if not public.within_review_window(v_session.ended_at) then
     raise exception 'session_ended' using errcode = 'P0001';
   end if;
   if v_request.state <> 'waiting' or not v_request.is_return then
@@ -182,7 +223,8 @@ begin
 end;
 $$;
 
--- A retired credential sees only that its place moved, never the place itself.
+-- A retired credential sees only that its place moved, never the place itself;
+-- neither answers after the review window.
 drop function public.guest_status(uuid, text);
 create function public.guest_status(p_session uuid, p_credential_hash text)
 returns table (
@@ -198,18 +240,19 @@ as $$
   join public.sessions s on s.id = p.session_id
   where p.session_id = p_session
     and p.credential_hash = p_credential_hash
-    and (s.ended_at is null or s.ended_at > now() - interval '90 days')
+    and public.within_review_window(s.ended_at)
   union all
   select s.title, s.state, 'moved', p.display_name
   from public.participant_retired_credentials r
   join public.session_participants p on p.id = r.participant_id
   join public.sessions s on s.id = p.session_id
   where p.session_id = p_session
-    and r.credential_hash = p_credential_hash;
+    and r.credential_hash = p_credential_hash
+    and public.within_review_window(s.ended_at);
 $$;
 
 -- The host's lobby and participant list, with a linked account's email as
--- verification evidence. Never returns credential hashes.
+-- verification evidence. Never returns credential hashes or account IDs.
 create function public.session_people(p_session uuid)
 returns table (
   id uuid, display_name text, state text, is_return boolean,
@@ -232,14 +275,17 @@ end;
 $$;
 
 revoke all on function
+  public.within_review_window(timestamptz),
   public.session_for_join(text),
   public.request_admission(text, text, text, boolean),
+  public.end_session(uuid),
   public.decide_participant(uuid, text),
   public.restore_participant(uuid, uuid),
   public.guest_status(uuid, text),
   public.session_people(uuid)
 from public, anon, authenticated;
 grant execute on function
+  public.end_session(uuid),
   public.decide_participant(uuid, text),
   public.restore_participant(uuid, uuid),
   public.session_people(uuid)

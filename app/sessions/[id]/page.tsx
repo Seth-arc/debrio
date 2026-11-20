@@ -64,7 +64,9 @@ function Restore({
         {admitted.map((place) => (
           <option key={place.id} value={place.id}>
             {place.display_name} (joined{" "}
-            {new Date(place.requested_at).toLocaleTimeString("en-GB", {
+            {new Date(place.requested_at).toLocaleString("en-GB", {
+              day: "numeric",
+              month: "short",
               hour: "2-digit",
               minute: "2-digit",
               timeZone: "UTC",
@@ -153,6 +155,13 @@ export default async function HostSession({
   const request = await headers();
   const link = `${request.get("x-forwarded-proto") ?? "http"}://${request.get("host")}/join/${session.join_key}`;
   const open = session.state === "open";
+  // The database decides whether returning requests are still possible.
+  const { data: joinable } = await host.supabase.rpc("session_for_join", {
+    p_key: session.join_key,
+  });
+  const reviewOpen = Boolean(
+    (joinable as { can_return: boolean }[] | null)?.[0]?.can_return
+  );
 
   return (
     <main>
@@ -284,7 +293,7 @@ export default async function HostSession({
         </details>
       )}
       {/* Returning requests can arrive after the end, within the 90 days. */}
-      <AutoRefresh seconds={3} />
+      {(open || reviewOpen) && <AutoRefresh seconds={3} />}
     </main>
   );
 }

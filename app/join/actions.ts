@@ -53,7 +53,8 @@ export async function requestAdmission(
   const credential = newGuestCredential();
   // Signed-in visitors call with their own Auth session so the account is
   // recorded as evidence; everyone else is anonymous. Neither grants entry.
-  const caller = (await serverSupabase()) ?? guest;
+  const caller = await serverSupabase();
+  if (!caller) return { error: SIGN_IN_UNCONFIGURED };
   const { data: sessionId, error } = await caller.rpc("request_admission", {
     p_key: key,
     p_display_name: name,

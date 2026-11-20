@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { spawnSync } from "node:child_process";
 import { describe, expect, test } from "vitest";
 import { client, confirmedHost } from "../support/hosts";
 import { SYNTHETIC_PASSWORD } from "../support/local-auth";
@@ -34,6 +35,30 @@ async function admittedGuest(
   const id = await participantId(host, session.id);
   expect((await decide(host, id, "admit")).error).toBeNull();
   return { ...guest, id };
+}
+
+// Simulates time passing after the session ended, in the disposable database only.
+function endedDaysAgo(sessionId: string, days: number) {
+  expect(sessionId).toMatch(/^[0-9a-f-]{36}$/);
+  const result = spawnSync(
+    "docker",
+    [
+      "compose",
+      "exec",
+      "-T",
+      "db",
+      "psql",
+      "-U",
+      "postgres",
+      "-v",
+      "ON_ERROR_STOP=1",
+    ],
+    {
+      input: `update public.sessions set ended_at = now() - interval '${days} days' where id = '${sessionId}';`,
+      encoding: "utf8",
+    }
+  );
+  expect(result.status).toBe(0);
 }
 
 async function returning(host: SupabaseClient, session: Session, name: string) {
@@ -206,5 +231,94 @@ describe("guest recovery", { timeout: 60_000 }, () => {
       (await participant.host.rpc("session_people", { p_session: session.id }))
         .error?.code
     ).toBe("42501");
+  });
+
+  test("an old device polling during a restore only ever sees its place or that it moved", async () => {
+    const { host, session } = await hostWithSession();
+    const ada = await admittedGuest(host, session, "Ada");
+    const back = await returning(host, session, "Ada again");
+    const polls = Array.from({ length: 20 }, () =>
+      status(session.id, ada.hash)
+    );
+    const [restored, ...seen] = await Promise.all([
+      restore(host, back.id, ada.id),
+      ...polls,
+    ]);
+    expect(restored.error).toBeNull();
+    for (const rows of seen) {
+      expect(rows).toHaveLength(1);
+      expect(["admitted", "moved"]).toContain(rows[0].participant_state);
+    }
+    expect((await status(session.id, ada.hash))[0].participant_state).toBe(
+      "moved"
+    );
+  });
+
+  test("requests need a fresh credential, and hosts never see account IDs", async () => {
+    const { host, session } = await hostWithSession();
+    const missing = await client().rpc("request_admission", {
+      p_key: session.join_key,
+      p_display_name: "No credential",
+      p_credential_hash: null,
+    });
+    expect(missing.error?.message).toBe("invalid_credential");
+
+    const ada = await admittedGuest(host, session, "Ada");
+    const back = await returning(host, session, "Ada again");
+    await restore(host, back.id, ada.id);
+    // The old device cannot reuse its retired credential to ask again.
+    const reused = await client().rpc("request_admission", {
+      p_key: session.join_key,
+      p_display_name: "Old device",
+      p_credential_hash: ada.hash,
+      p_returning: true,
+    });
+    expect(reused.error?.message).toBe("invalid_credential");
+
+    const accountRead = await host
+      .from("session_participants")
+      .select("account_id")
+      .eq("session_id", session.id);
+    expect(accountRead.error?.code).toBe("42501");
+  });
+
+  test("ending a session turns away new people still waiting", async () => {
+    const { host, session } = await hostWithSession();
+    const waiting = await guestJoins(session.join_key, "Still waiting");
+    await host.rpc("end_session", { p_session: session.id });
+    expect((await status(session.id, waiting.hash))[0]).toMatchObject({
+      participant_state: "denied",
+      session_state: "ended",
+    });
+    expect(
+      (await people(host, session.id)).filter(
+        ({ state }) => state === "waiting"
+      )
+    ).toEqual([]);
+  });
+
+  test("after the 90-day review window nothing answers and nothing can be restored", async () => {
+    const { host, session } = await hostWithSession();
+    const ada = await admittedGuest(host, session, "Ada");
+    const back = await returning(host, session, "Ada again");
+    await restore(host, back.id, ada.id);
+    const pending = await returning(host, session, "Ada later");
+    await host.rpc("end_session", { p_session: session.id });
+
+    endedDaysAgo(session.id, 89);
+    expect(await status(session.id, back.hash)).toHaveLength(1);
+    endedDaysAgo(session.id, 91);
+    expect(await status(session.id, back.hash)).toEqual([]);
+    expect(await status(session.id, ada.hash)).toEqual([]);
+    expect(
+      (await guestJoins(session.join_key, "Too late", { returning: true }))
+        .joined.error?.message
+    ).toBe("session_ended");
+    expect((await restore(host, pending.id, ada.id)).error?.message).toBe(
+      "session_ended"
+    );
+    expect((await decide(host, pending.id, "deny")).error?.message).toBe(
+      "session_ended"
+    );
   });
 });

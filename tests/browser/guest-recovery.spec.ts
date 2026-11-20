@@ -44,6 +44,43 @@ test("a host restores a returning guest on a new device, during and after the se
     oldDevice.page.getByRole("heading", { name: "You're in" })
   ).toBeVisible(SOON);
 
+  // Open lobby, keyboard only: the person ticks "I was already in this session".
+  const phone = await device(browser);
+  await phone.page.goto(link);
+  await phone.page.getByLabel("Your name").fill("Ada on her phone");
+  await phone.page.keyboard.press("Tab");
+  await expect(
+    phone.page.getByLabel("I was already in this session")
+  ).toBeFocused();
+  await phone.page.keyboard.press("Space");
+  await expect(
+    phone.page.getByLabel("I was already in this session")
+  ).toBeChecked();
+  await expectAccessible(phone.page);
+  await phone.page.keyboard.press("Tab");
+  await phone.page.keyboard.press("Enter");
+  await expect(
+    phone.page.getByRole("heading", { name: "Waiting to be let in" })
+  ).toBeVisible();
+  // The host restores from the keyboard.
+  const restorePhone = page.getByLabel("Restore Ada on her phone as");
+  await expect(restorePhone).toBeVisible(SOON);
+  await expect(restorePhone.locator("option:checked")).toContainText(
+    "Ada Guest"
+  );
+  await restorePhone.focus();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Restore" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    phone.page.getByRole("heading", { name: "You're in" })
+  ).toBeVisible(SOON);
+  await expect(
+    oldDevice.page.getByRole("heading", {
+      name: "This place moved to another device",
+    })
+  ).toBeVisible(SOON);
+
   // The lobby is closed to new people, but a returning person can still ask.
   await page.getByRole("button", { name: "Close the lobby" }).click();
   const newDevice = await device(browser);
@@ -77,11 +114,11 @@ test("a host restores a returning guest on a new device, during and after the se
   ).toBeVisible(SOON);
   await expect(newDevice.page.getByRole("status")).toContainText("Ada Guest");
   await expect(
-    oldDevice.page.getByRole("heading", {
+    phone.page.getByRole("heading", {
       name: "This place moved to another device",
     })
   ).toBeVisible(SOON);
-  await expectAccessible(oldDevice.page);
+  await expectAccessible(phone.page);
 
   // After the session ends, a returning person can still be restored.
   await page.getByText("End session…").click();
@@ -91,6 +128,7 @@ test("a host restores a returning guest on a new device, during and after the se
   await expect(
     laterDevice.page.getByRole("heading", { name: "This session has ended" })
   ).toBeVisible();
+  await expectAccessible(laterDevice.page);
   await laterDevice.page.getByLabel("Your name").fill("Ada, back later");
   await laterDevice.page.getByLabel("Your name").press("Enter");
   await expect(
@@ -100,15 +138,17 @@ test("a host restores a returning guest on a new device, during and after the se
     "1 waiting to be restored",
     SOON
   );
+  await expectAccessible(page);
   const restoreLater = page.getByLabel("Restore Ada, back later as");
   await restoreLater.selectOption({ index: 0 });
   await expect(restoreLater.locator("option:checked")).toContainText(
     "Ada Guest"
   );
   await page.getByRole("button", { name: "Restore" }).click();
-  await expect(
-    laterDevice.page.getByRole("heading", { name: "This session has ended" })
-  ).toBeVisible(SOON);
+  await expect(laterDevice.page.getByRole("status")).toHaveText(
+    "Your place as Ada Guest is on this device. Thanks for coming.",
+    SOON
+  );
   await newDevice.page.reload();
   await expect(
     newDevice.page.getByRole("heading", {
@@ -116,7 +156,7 @@ test("a host restores a returning guest on a new device, during and after the se
     })
   ).toBeVisible();
 
-  for (const each of [oldDevice, newDevice, laterDevice]) {
+  for (const each of [oldDevice, phone, newDevice, laterDevice]) {
     expect(each.errors).toEqual([]);
     await each.context.close();
   }
@@ -147,6 +187,7 @@ test("joining while signed in shows the account to the host but admits nobody", 
   ).toBeVisible();
 
   await expect(page.getByText(`signed in as ${email}`)).toBeVisible(SOON);
+  await expectAccessible(page);
   await expect(page.getByRole("status")).toContainText(
     "1 waiting · 0 in the session"
   );

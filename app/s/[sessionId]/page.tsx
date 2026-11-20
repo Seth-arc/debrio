@@ -81,11 +81,15 @@ export default async function GuestSession({
     text = "Open the session link your host shared to ask to join.";
   } else if (
     place.session_state === "ended" &&
-    // A returning request still waits for the host; a moved place says so.
+    // After the end only returning requests still wait (others are turned away
+    // when the session ends), and a moved place says so.
     !["waiting", "moved"].includes(place.participant_state)
   ) {
     heading = "This session has ended";
-    text = "Thanks for coming.";
+    text =
+      place.participant_state === "admitted"
+        ? `Your place as ${place.display_name} is on this device. Thanks for coming.`
+        : "Thanks for coming.";
   } else {
     const shown =
       Object.entries(PLACES).find(
