@@ -4,15 +4,22 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import {
   agendaWarnings,
-  newStage,
+  newActivity,
   nextId,
+  removeActivity,
+  removeField,
+  removeObjective,
   totalMinutes,
+  type Activity,
   type Agenda,
-  type Stage,
+  type AnswerField,
 } from "../../../lib/agenda";
 import { markWorkshopReady, saveWorkshopDraft } from "../actions";
 
 type Reply = { text: string; problems?: string[] };
+
+const LEAVE_WARNING =
+  "You have unsaved changes on this page. Leave without saving them?";
 
 const move = <T,>(list: T[], from: number, to: number) => {
   const copy = [...list];
@@ -21,52 +28,87 @@ const move = <T,>(list: T[], from: number, to: number) => {
   return copy;
 };
 
+// Planned minutes may be blank while typing; they settle to 1–240 on leaving the field.
+const settleMinutes = (value: number) =>
+  Math.max(1, Math.min(240, Math.round(value) || 1));
+
 // Edits one draft version. The database validates on save and on Ready to run.
 export function AgendaEditor({
   versionId,
-  updatedAt,
+  revision,
   initial,
   problems,
 }: {
   versionId: string;
-  updatedAt: string;
+  revision: number;
   initial: Agenda;
   problems: string[];
 }) {
   const router = useRouter();
   const [agenda, setAgenda] = useState(initial);
   const [saved, setSaved] = useState({
-    updatedAt,
+    revision,
     content: JSON.stringify(initial),
   });
   const [reply, setReply] = useState<Reply | null>(null);
   const [pending, startTransition] = useTransition();
   const dirty = JSON.stringify(agenda) !== saved.content;
 
-  // Leaving with unsaved edits asks first; saved work is never at risk.
+  // With unsaved edits, ask before the tab closes or reloads, and before any
+  // in-page way out marked data-leave (the back link, Duplicate).
   useEffect(() => {
     if (!dirty) return;
-    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
+    const beforeUnload = (event: BeforeUnloadEvent) => event.preventDefault();
+    const leave = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("[data-leave]") && !window.confirm(LEAVE_WARNING)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    document.addEventListener("click", leave, true);
+    return () => {
+      window.removeEventListener("beforeunload", beforeUnload);
+      document.removeEventListener("click", leave, true);
+    };
   }, [dirty]);
 
-  const setStage = (index: number, change: Partial<Stage>) =>
+  const setActivity = (index: number, change: Partial<Activity>) =>
     setAgenda((current) => ({
       ...current,
-      steps: current.steps.map((stage, i) =>
-        i === index ? { ...stage, ...change } : stage
+      activities: current.activities.map((activity, i) =>
+        i === index ? { ...activity, ...change } : activity
+      ),
+    }));
+
+  const setField = (
+    index: number,
+    fieldId: string,
+    change: Partial<AnswerField>
+  ) =>
+    setAgenda((current) => ({
+      ...current,
+      activities: current.activities.map((activity, i) =>
+        i === index
+          ? {
+              ...activity,
+              outputs: activity.outputs.map((field) =>
+                field.id === fieldId ? { ...field, ...change } : field
+              ),
+            }
+          : activity
       ),
     }));
 
   async function save() {
-    const result = await saveWorkshopDraft(versionId, saved.updatedAt, agenda);
+    const result = await saveWorkshopDraft(versionId, saved.revision, agenda);
     if ("error" in result) {
       setReply({ text: result.error });
       return null;
     }
-    setSaved({ updatedAt: result.updatedAt, content: JSON.stringify(agenda) });
-    return result.updatedAt;
+    setSaved({ revision: result.revision, content: JSON.stringify(agenda) });
+    return result.revision;
   }
 
   const onSave = () =>
@@ -79,14 +121,11 @@ export function AgendaEditor({
 
   const onReady = () =>
     startTransition(async () => {
-      const current = dirty ? await save() : saved.updatedAt;
+      const current = dirty ? await save() : saved.revision;
       if (!current) return;
       const result = await markWorkshopReady(versionId, current);
-      if ("error" in result) {
+      if ("error" in result)
         setReply({ text: result.error, problems: result.problems });
-        router.refresh();
-        return;
-      }
       router.refresh();
     });
 
@@ -97,8 +136,8 @@ export function AgendaEditor({
       <section aria-labelledby="objectives-heading">
         <h2 id="objectives-heading">Objectives</h2>
         <p className="hint">
-          What participants should be able to do afterwards. Link stages to them
-          below.
+          What participants should be able to do afterwards. Link activities to
+          them below.
         </p>
         <ol>
           {agenda.objectives.map((objective, index) => (
@@ -126,17 +165,7 @@ export function AgendaEditor({
                 className="secondary"
                 aria-label={`Remove objective ${index + 1}`}
                 onClick={() =>
-                  setAgenda((current) => ({
-                    objectives: current.objectives.filter(
-                      (o) => o.id !== objective.id
-                    ),
-                    steps: current.steps.map((stage) => ({
-                      ...stage,
-                      objectives: stage.objectives.filter(
-                        (id) => id !== objective.id
-                      ),
-                    })),
-                  }))
+                  setAgenda((current) => removeObjective(current, objective.id))
                 }
               >
                 Remove
@@ -162,39 +191,41 @@ export function AgendaEditor({
         </button>
       </section>
 
-      <section aria-labelledby="stages-heading">
-        <h2 id="stages-heading">Stages</h2>
+      <section aria-labelledby="activities-heading">
+        <h2 id="activities-heading">Activities</h2>
         <p className="hint">
-          Stages run in order. Planned total: {totalMinutes(agenda)} of 240
-          minutes.
+          What participants do, in order. Planned total: {totalMinutes(agenda)}{" "}
+          of 240 minutes.
         </p>
-        {agenda.steps.map((stage, index) => {
-          const key = (field: string) => `${stage.id}-${field}`;
-          const earlier = agenda.steps.slice(0, index);
+        {agenda.activities.map((activity, index) => {
+          const key = (field: string) => `${activity.id}-${field}`;
+          const earlier = agenda.activities.slice(0, index);
           return (
-            <fieldset key={stage.id} className="stage">
+            <fieldset key={activity.id} className="activity">
               <legend>
-                Stage {index + 1}
-                {stage.title ? `: ${stage.title}` : ""}
+                Activity {index + 1}
+                {activity.title ? `: ${activity.title}` : ""}
               </legend>
               <div className="field">
                 <label htmlFor={key("title")}>Title</label>
                 <input
                   id={key("title")}
-                  value={stage.title}
+                  value={activity.title}
                   maxLength={120}
-                  onChange={(e) => setStage(index, { title: e.target.value })}
+                  onChange={(e) =>
+                    setActivity(index, { title: e.target.value })
+                  }
                 />
               </div>
               <div className="field">
                 <label htmlFor={key("instructions")}>Instructions</label>
                 <textarea
                   id={key("instructions")}
-                  value={stage.instructions}
+                  value={activity.instructions}
                   maxLength={4000}
                   rows={4}
                   onChange={(e) =>
-                    setStage(index, { instructions: e.target.value })
+                    setActivity(index, { instructions: e.target.value })
                   }
                 />
               </div>
@@ -203,10 +234,10 @@ export function AgendaEditor({
                   <label htmlFor={key("scope")}>Who works on it</label>
                   <select
                     id={key("scope")}
-                    value={stage.scope}
+                    value={activity.scope}
                     onChange={(e) =>
-                      setStage(index, {
-                        scope: e.target.value as Stage["scope"],
+                      setActivity(index, {
+                        scope: e.target.value as Activity["scope"],
                       })
                     }
                   >
@@ -221,13 +252,13 @@ export function AgendaEditor({
                     type="number"
                     min={1}
                     max={240}
-                    value={stage.minutes}
+                    value={activity.minutes || ""}
                     onChange={(e) =>
-                      setStage(index, {
-                        minutes: Math.max(
-                          1,
-                          Math.min(240, Math.round(Number(e.target.value)) || 1)
-                        ),
+                      setActivity(index, { minutes: Number(e.target.value) })
+                    }
+                    onBlur={() =>
+                      setActivity(index, {
+                        minutes: settleMinutes(activity.minutes),
                       })
                     }
                   />
@@ -236,7 +267,7 @@ export function AgendaEditor({
 
               <fieldset>
                 <legend>What participants produce</legend>
-                {stage.outputs.map((field, fieldIndex) => (
+                {activity.outputs.map((field, fieldIndex) => (
                   <div className="row" key={field.id}>
                     <div className="field">
                       <label htmlFor={key(`${field.id}-label`)}>
@@ -247,13 +278,7 @@ export function AgendaEditor({
                         value={field.label}
                         maxLength={120}
                         onChange={(e) =>
-                          setStage(index, {
-                            outputs: stage.outputs.map((f) =>
-                              f.id === field.id
-                                ? { ...f, label: e.target.value }
-                                : f
-                            ),
-                          })
+                          setField(index, field.id, { label: e.target.value })
                         }
                       />
                     </div>
@@ -265,15 +290,8 @@ export function AgendaEditor({
                         id={key(`${field.id}-kind`)}
                         value={field.kind}
                         onChange={(e) =>
-                          setStage(index, {
-                            outputs: stage.outputs.map((f) =>
-                              f.id === field.id
-                                ? {
-                                    ...f,
-                                    kind: e.target.value as "short" | "long",
-                                  }
-                                : f
-                            ),
+                          setField(index, field.id, {
+                            kind: e.target.value as AnswerField["kind"],
                           })
                         }
                       >
@@ -284,13 +302,11 @@ export function AgendaEditor({
                     <button
                       type="button"
                       className="secondary"
-                      aria-label={`Remove answer ${fieldIndex + 1} from stage ${index + 1}`}
+                      aria-label={`Remove answer ${fieldIndex + 1} from activity ${index + 1}`}
                       onClick={() =>
-                        setStage(index, {
-                          outputs: stage.outputs.filter(
-                            (f) => f.id !== field.id
-                          ),
-                        })
+                        setAgenda((current) =>
+                          removeField(current, activity.id, field.id)
+                        )
                       }
                     >
                       Remove
@@ -300,13 +316,13 @@ export function AgendaEditor({
                 <button
                   type="button"
                   className="secondary"
-                  disabled={stage.outputs.length >= 10}
+                  disabled={activity.outputs.length >= 10}
                   onClick={() =>
-                    setStage(index, {
+                    setActivity(index, {
                       outputs: [
-                        ...stage.outputs,
+                        ...activity.outputs,
                         {
-                          id: nextId("f", stage.outputs),
+                          id: nextId("f", activity.outputs),
                           label: "",
                           kind: "long",
                         },
@@ -325,14 +341,15 @@ export function AgendaEditor({
                 <select
                   id={key("input")}
                   value={
-                    stage.input
-                      ? `${stage.input.step}:${stage.input.field}`
+                    activity.input
+                      ? `${activity.input.activity}:${activity.input.field}`
                       : ""
                   }
                   onChange={(e) => {
-                    const [step, field] = e.target.value.split(":");
-                    setStage(index, {
-                      input: step && field ? { step, field } : null,
+                    const [source, field] = e.target.value.split(":");
+                    setActivity(index, {
+                      input:
+                        source && field ? { activity: source, field } : null,
                     });
                   }}
                 >
@@ -343,21 +360,22 @@ export function AgendaEditor({
                         key={`${source.id}:${field.id}`}
                         value={`${source.id}:${field.id}`}
                       >
-                        Stage {sourceIndex + 1}: {field.label || "(unlabelled)"}
+                        Activity {sourceIndex + 1}:{" "}
+                        {field.label || "(unlabelled)"}
                       </option>
                     ))
                   )}
-                  {/* Keep a now-invalid link visible so Ready to run can explain it. */}
-                  {stage.input &&
+                  {/* After a reorder, keep the link visible so Ready to run can explain it. */}
+                  {activity.input &&
                     !earlier.some(
                       (s) =>
-                        s.id === stage.input?.step &&
-                        s.outputs.some((f) => f.id === stage.input?.field)
+                        s.id === activity.input?.activity &&
+                        s.outputs.some((f) => f.id === activity.input?.field)
                     ) && (
                       <option
-                        value={`${stage.input.step}:${stage.input.field}`}
+                        value={`${activity.input.activity}:${activity.input.field}`}
                       >
-                        A stage that is no longer earlier
+                        An activity that is no longer earlier
                       </option>
                     )}
                 </select>
@@ -365,18 +383,18 @@ export function AgendaEditor({
 
               {agenda.objectives.length > 0 && (
                 <fieldset>
-                  <legend>Objectives this stage serves</legend>
+                  <legend>Objectives this activity serves</legend>
                   {agenda.objectives.map((objective, objectiveIndex) => (
                     <div className="field check" key={objective.id}>
                       <input
                         type="checkbox"
                         id={key(`objective-${objective.id}`)}
-                        checked={stage.objectives.includes(objective.id)}
+                        checked={activity.objectives.includes(objective.id)}
                         onChange={(e) =>
-                          setStage(index, {
+                          setActivity(index, {
                             objectives: e.target.checked
-                              ? [...stage.objectives, objective.id]
-                              : stage.objectives.filter(
+                              ? [...activity.objectives, objective.id]
+                              : activity.objectives.filter(
                                   (id) => id !== objective.id
                                 ),
                           })
@@ -395,11 +413,11 @@ export function AgendaEditor({
                   type="button"
                   className="secondary"
                   disabled={index === 0}
-                  aria-label={`Move up: stage ${index + 1}`}
+                  aria-label={`Move up: activity ${index + 1}`}
                   onClick={() =>
                     setAgenda((current) => ({
                       ...current,
-                      steps: move(current.steps, index, index - 1),
+                      activities: move(current.activities, index, index - 1),
                     }))
                   }
                 >
@@ -408,12 +426,12 @@ export function AgendaEditor({
                 <button
                   type="button"
                   className="secondary"
-                  disabled={index === agenda.steps.length - 1}
-                  aria-label={`Move down: stage ${index + 1}`}
+                  disabled={index === agenda.activities.length - 1}
+                  aria-label={`Move down: activity ${index + 1}`}
                   onClick={() =>
                     setAgenda((current) => ({
                       ...current,
-                      steps: move(current.steps, index, index + 1),
+                      activities: move(current.activities, index, index + 1),
                     }))
                   }
                 >
@@ -422,15 +440,12 @@ export function AgendaEditor({
                 <button
                   type="button"
                   className="secondary"
-                  aria-label={`Remove stage ${index + 1}`}
+                  aria-label={`Remove activity ${index + 1}`}
                   onClick={() =>
-                    setAgenda((current) => ({
-                      ...current,
-                      steps: current.steps.filter((s) => s.id !== stage.id),
-                    }))
+                    setAgenda((current) => removeActivity(current, activity.id))
                   }
                 >
-                  Remove stage
+                  Remove activity
                 </button>
               </div>
             </fieldset>
@@ -439,15 +454,18 @@ export function AgendaEditor({
         <button
           type="button"
           className="secondary"
-          disabled={agenda.steps.length >= 40}
+          disabled={agenda.activities.length >= 40}
           onClick={() =>
             setAgenda((current) => ({
               ...current,
-              steps: [...current.steps, newStage(current.steps)],
+              activities: [
+                ...current.activities,
+                newActivity(current.activities),
+              ],
             }))
           }
         >
-          Add stage
+          Add activity
         </button>
       </section>
 

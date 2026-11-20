@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { Agenda } from "../../../lib/agenda";
-import { isSessionId as isId } from "../../../lib/guest";
+import { isUuid } from "../../../lib/ids";
 import { currentHost } from "../../../lib/supabase";
 import { HostProblem } from "../../host-problem";
 import { workshopCommand } from "../actions";
@@ -17,6 +17,7 @@ type Version = {
   number: number;
   state: "draft" | "ready";
   content: Agenda;
+  revision: number;
   updated_at: string;
   ready_at: string | null;
 };
@@ -43,7 +44,15 @@ function Command({
     <form action={workshopCommand} className="inline">
       <input type="hidden" name="workshop" value={workshop} />
       <input type="hidden" name="command" value={command} />
-      <button type="submit" className="secondary">
+      {/* One operation per rendered page: a resubmitted Duplicate returns the same copy. */}
+      {command === "duplicate" && (
+        <input type="hidden" name="operation" value={crypto.randomUUID()} />
+      )}
+      <button
+        type="submit"
+        className="secondary"
+        data-leave={command === "duplicate" ? "" : undefined}
+      >
         {children}
       </button>
     </form>
@@ -65,21 +74,21 @@ function ReadOnlyAgenda({ agenda }: { agenda: Agenda }) {
           ))}
         </ol>
       )}
-      <h2>Stages</h2>
-      <ol className="stages">
-        {agenda.steps.map((stage) => (
-          <li key={stage.id}>
-            <h3>{stage.title}</h3>
+      <h2>Activities</h2>
+      <ol className="activities">
+        {agenda.activities.map((activity) => (
+          <li key={activity.id}>
+            <h3>{activity.title}</h3>
             <p>
-              {stage.scope === "group"
+              {activity.scope === "group"
                 ? "Groups together"
                 : "Each person alone"}{" "}
-              · {stage.minutes} minutes
+              · {activity.minutes} minutes
             </p>
-            <p className="instructions">{stage.instructions}</p>
-            <p>Produces: {stage.outputs.map((f) => f.label).join("; ")}</p>
-            {stage.objectives.length > 0 && (
-              <p>Serves: {stage.objectives.map(objective).join("; ")}</p>
+            <p className="instructions">{activity.instructions}</p>
+            <p>Produces: {activity.outputs.map((f) => f.label).join("; ")}</p>
+            {activity.objectives.length > 0 && (
+              <p>Serves: {activity.objectives.map(objective).join("; ")}</p>
             )}
           </li>
         ))}
@@ -100,7 +109,7 @@ export default async function Workshop({
   if (host.state === "signed-out") redirect("/sign-in");
   if (host.state === "aal1") redirect("/mfa");
   if (host.state !== "aal2") return <HostProblem state={host.state} />;
-  if (!isId(id)) notFound();
+  if (!isUuid(id)) notFound();
   const [workshopResult, versionsResult] = await Promise.all([
     host.supabase
       .from("workshops")
@@ -109,7 +118,7 @@ export default async function Workshop({
       .maybeSingle(),
     host.supabase
       .from("workshop_versions")
-      .select("id, number, state, content, updated_at, ready_at")
+      .select("id, number, state, content, revision, updated_at, ready_at")
       .eq("workshop_id", id)
       .order("number", { ascending: false }),
   ]);
@@ -141,7 +150,9 @@ export default async function Workshop({
     <main className="wide">
       <p className="wordmark">Debrio</p>
       <p>
-        <Link href="/workspace">Back to your workspace</Link>
+        <Link href="/workspace" data-leave="">
+          Back to your workspace
+        </Link>
       </p>
       <h1>{workshop.title}</h1>
       {unavailable && (
@@ -161,7 +172,7 @@ export default async function Workshop({
           <AgendaEditor
             key={draft.id}
             versionId={draft.id}
-            updatedAt={draft.updated_at}
+            revision={draft.revision}
             initial={draft.content}
             problems={problems}
           />

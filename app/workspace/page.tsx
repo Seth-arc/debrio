@@ -105,6 +105,8 @@ export default async function Workspace() {
         <Form
           action={createWorkshop}
           submit="Create workshop"
+          // One operation per rendered form: a retried submit returns the same workshop.
+          hidden={{ operation: crypto.randomUUID() }}
           fields={[
             {
               name: "title",

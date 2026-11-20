@@ -8,9 +8,21 @@ import {
 
 // Requires the local stack (npm run db:start) and a production build.
 
-// Each stage is a fieldset in agenda order.
-const stage = (page: Page, number: number) =>
-  page.locator("fieldset.stage").nth(number - 1);
+// Each activity is a fieldset in agenda order.
+const activity = (page: Page, number: number) =>
+  page.locator("fieldset.activity").nth(number - 1);
+
+const LEAVE_WARNING =
+  "You have unsaved changes on this page. Leave without saving them?";
+
+// Answers the next in-page leave confirmation.
+function answerLeave(page: Page, leave: boolean) {
+  page.once("dialog", async (dialog) => {
+    expect(dialog.type()).toBe("confirm");
+    expect(dialog.message()).toBe(LEAVE_WARNING);
+    await (leave ? dialog.accept() : dialog.dismiss());
+  });
+}
 
 async function saveDraft(page: Page) {
   await page.getByRole("button", { name: "Save draft" }).click();
@@ -35,10 +47,10 @@ test("a host builds, saves, reorders and freezes an agenda, then starts a new dr
     .getByLabel("Objective 1", { exact: true })
     .fill("Give specific feedback");
 
-  // Stage 1, built from the keyboard.
-  await page.getByRole("button", { name: "Add stage" }).focus();
+  // Activity 1, built from the keyboard.
+  await page.getByRole("button", { name: "Add activity" }).focus();
   await page.keyboard.press("Enter");
-  const first = stage(page, 1);
+  const first = activity(page, 1);
   await first.getByLabel("Title").fill("Think alone");
   await first
     .getByLabel("Instructions")
@@ -46,23 +58,36 @@ test("a host builds, saves, reorders and freezes an agenda, then starts a new dr
   await first.getByLabel("Answer 1 label").fill("Your opening");
   await first.getByLabel("Give specific feedback").check();
 
-  await page.getByRole("button", { name: "Add stage" }).click();
-  const second = stage(page, 2);
+  await page.getByRole("button", { name: "Add activity" }).click();
+  const second = activity(page, 2);
   await second.getByLabel("Title").fill("Compare in groups");
   await second
     .getByLabel("Instructions")
     .fill("Agree on the strongest opening.");
   await second.getByLabel("Who works on it").selectOption("group");
-  await second.getByLabel("Planned minutes").fill("20");
+  // Planned minutes can be cleared and retyped, and settle to 1–240 on leaving.
+  const minutes = second.getByLabel("Planned minutes");
+  await minutes.fill("");
+  await minutes.blur();
+  await expect(minutes).toHaveValue("1");
+  await minutes.click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type("30");
+  await expect(minutes).toHaveValue("30");
+  await minutes.fill("999");
+  await minutes.blur();
+  await expect(minutes).toHaveValue("240");
+  await minutes.fill("20");
   await second.getByLabel("Answer 1 label").fill("Agreed opening");
   await second
     .getByLabel("Builds on an earlier answer")
-    .selectOption({ label: "Stage 1: Your opening" });
+    .selectOption({ label: "Activity 1: Your opening" });
   await expect(page.getByRole("status")).toHaveText(
     "You have unsaved changes."
   );
   await expect(
-    page.getByText("Stage 2 isn't linked to an objective.")
+    page.getByText("Activity 2 isn't linked to an objective.")
   ).toBeVisible();
   await expectAccessible(page);
   await saveDraft(page);
@@ -72,28 +97,28 @@ test("a host builds, saves, reorders and freezes an agenda, then starts a new dr
 
   // Saved content survives a reload.
   await page.reload();
-  await expect(stage(page, 2).getByLabel("Title")).toHaveValue(
+  await expect(activity(page, 2).getByLabel("Title")).toHaveValue(
     "Compare in groups"
   );
   await expect(
-    stage(page, 2).getByLabel("Builds on an earlier answer")
-  ).toHaveValue("s1:f1");
+    activity(page, 2).getByLabel("Builds on an earlier answer")
+  ).toHaveValue("a1:f1");
 
-  // Moving the dependent stage first is saved, and readiness explains the problem.
-  await page.getByRole("button", { name: "Move up: stage 2" }).click();
+  // Moving the dependent activity first is saved, and readiness explains the problem.
+  await page.getByRole("button", { name: "Move up: activity 2" }).click();
   await saveDraft(page);
   await expect(
-    page.getByText("Stage 1 can only use input from an earlier stage.")
+    page.getByText("Activity 1 can only use input from an earlier activity.")
   ).toBeVisible();
-  await page.getByRole("button", { name: "Move up: stage 2" }).click();
-  await stage(page, 1).getByLabel("Instructions").fill("");
+  await page.getByRole("button", { name: "Move up: activity 2" }).click();
+  await activity(page, 1).getByLabel("Instructions").fill("");
 
   // Ready to run saves first, then refuses with the remaining problem.
   await page.getByRole("button", { name: "Mark ready to run" }).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "isn't ready" })
-  ).toContainText("Stage 1 needs instructions.");
-  await stage(page, 1)
+  ).toContainText("Activity 1 needs instructions.");
+  await activity(page, 1)
     .getByLabel("Instructions")
     .fill("Write what you would say first.");
   await page.getByRole("button", { name: "Mark ready to run" }).click();
@@ -107,20 +132,43 @@ test("a host builds, saves, reorders and freezes an agenda, then starts a new dr
 
   await page.getByRole("button", { name: "Create a new draft" }).click();
   await expect(page.getByText("Editing draft version 2.")).toBeVisible();
-  await expect(stage(page, 1).getByLabel("Title")).toHaveValue("Think alone");
+  await expect(activity(page, 1).getByLabel("Title")).toHaveValue(
+    "Think alone"
+  );
   await expect(page.getByText("Version 1: ready to run since")).toBeVisible();
 
+  // In-page ways out ask first while there are unsaved edits.
+  await activity(page, 1).getByLabel("Title").fill("Unsaved title");
+  answerLeave(page, false);
+  await page.getByRole("link", { name: "Back to your workspace" }).click();
+  answerLeave(page, false);
+  await page.getByRole("button", { name: "Duplicate this workshop" }).click();
+  await expect(page.getByText("Editing draft version 2.")).toBeVisible();
+  await expect(activity(page, 1).getByLabel("Title")).toHaveValue(
+    "Unsaved title"
+  );
+  answerLeave(page, true);
   await page.getByRole("button", { name: "Duplicate this workshop" }).click();
   await expect(
     page.getByRole("heading", { name: "Copy of Feedback practice" })
   ).toBeVisible();
-  await expect(stage(page, 2).getByLabel("Title")).toHaveValue(
+  // The copy holds the saved agenda, not the abandoned edit.
+  await expect(activity(page, 1).getByLabel("Title")).toHaveValue(
+    "Think alone"
+  );
+  await expect(activity(page, 2).getByLabel("Title")).toHaveValue(
     "Compare in groups"
   );
+  const copyUrl = page.url();
+  await activity(page, 1).getByLabel("Title").fill("Unsaved title");
+  answerLeave(page, true);
+  await page.getByRole("link", { name: "Back to your workspace" }).click();
+  await expect(page).toHaveURL(/\/workspace$/);
   expect(errors).toEqual([]);
 
-  // Leaving with unsaved edits asks first.
-  await stage(page, 1).getByLabel("Title").fill("Unsaved title");
+  // Closing or reloading the tab with unsaved edits asks the browser first.
+  await page.goto(copyUrl);
+  await activity(page, 1).getByLabel("Title").fill("Unsaved title");
   const dialog = page.waitForEvent("dialog");
   void page.close({ runBeforeUnload: true });
   const warning = await dialog;
@@ -149,17 +197,17 @@ test("a save from an out-of-date tab is refused and keeps what the host typed", 
   const otherTab = await page.context().newPage();
   await otherTab.goto(page.url());
 
-  await page.getByRole("button", { name: "Add stage" }).click();
-  await stage(page, 1).getByLabel("Title").fill("Saved first");
+  await page.getByRole("button", { name: "Add activity" }).click();
+  await activity(page, 1).getByLabel("Title").fill("Saved first");
   await saveDraft(page);
 
-  await otherTab.getByRole("button", { name: "Add stage" }).click();
-  await stage(otherTab, 1).getByLabel("Title").fill("Typed in the old tab");
+  await otherTab.getByRole("button", { name: "Add activity" }).click();
+  await activity(otherTab, 1).getByLabel("Title").fill("Typed in the old tab");
   await otherTab.getByRole("button", { name: "Save draft" }).click();
   await expect(
     otherTab.getByRole("alert").filter({ hasText: "changed somewhere else" })
   ).toBeVisible();
-  await expect(stage(otherTab, 1).getByLabel("Title")).toHaveValue(
+  await expect(activity(otherTab, 1).getByLabel("Title")).toHaveValue(
     "Typed in the old tab"
   );
   await expect(otherTab.getByRole("status")).toHaveText(
@@ -168,6 +216,8 @@ test("a save from an out-of-date tab is refused and keeps what the host typed", 
 
   // The first tab's save was not overwritten.
   await page.reload();
-  await expect(stage(page, 1).getByLabel("Title")).toHaveValue("Saved first");
+  await expect(activity(page, 1).getByLabel("Title")).toHaveValue(
+    "Saved first"
+  );
   await otherTab.close();
 });

@@ -15,7 +15,7 @@ as $$
   select '{
     "type": "object",
     "additionalProperties": false,
-    "required": ["objectives", "steps"],
+    "required": ["objectives", "activities"],
     "properties": {
       "objectives": {
         "type": "array",
@@ -30,7 +30,7 @@ as $$
           }
         }
       },
-      "steps": {
+      "activities": {
         "type": "array",
         "maxItems": 40,
         "items": {
@@ -38,7 +38,7 @@ as $$
           "additionalProperties": false,
           "required": ["id", "title", "instructions", "scope", "minutes", "outputs", "input", "objectives"],
           "properties": {
-            "id": { "type": "string", "pattern": "^s[0-9]{1,6}$" },
+            "id": { "type": "string", "pattern": "^a[0-9]{1,6}$" },
             "title": { "type": "string", "maxLength": 120 },
             "instructions": { "type": "string", "maxLength": 4000 },
             "scope": { "enum": ["individual", "group"] },
@@ -63,9 +63,9 @@ as $$
                 {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["step", "field"],
+                  "required": ["activity", "field"],
                   "properties": {
-                    "step": { "type": "string", "pattern": "^s[0-9]{1,6}$" },
+                    "activity": { "type": "string", "pattern": "^a[0-9]{1,6}$" },
                     "field": { "type": "string", "pattern": "^f[0-9]{1,6}$" }
                   }
                 }
@@ -91,6 +91,8 @@ create table public.workshops (
     char_length(title) between 1 and 120 and title !~ '^[[:space:]]|[[:space:]]$'
   ),
   created_by uuid default auth.uid() references auth.users (id) on delete set null,
+  -- The command that created it, so a retried create or duplicate returns it.
+  operation_id uuid not null unique,
   created_at timestamptz not null default now()
 );
 create index workshops_workspace on public.workshops (workspace_id);
@@ -100,9 +102,11 @@ create table public.workshop_versions (
   workshop_id uuid not null references public.workshops (id) on delete restrict,
   number integer not null check (number > 0),
   state text not null default 'draft' check (state in ('draft', 'ready')),
-  content jsonb not null default '{"objectives": [], "steps": []}'
+  content jsonb not null default '{"objectives": [], "activities": []}'
     check (extensions.jsonb_matches_schema(public.workshop_content_schema(), content)),
-  updated_at timestamptz not null default clock_timestamp(),
+  -- Optimistic concurrency: every save and the freeze must name the revision they loaded.
+  revision integer not null default 1 check (revision > 0),
+  updated_at timestamptz not null default now(),
   ready_at timestamptz,
   check ((state = 'ready') = (ready_at is not null)),
   unique (workshop_id, number)
@@ -145,7 +149,8 @@ create policy "Owners with MFA read their workshop versions"
 revoke all on public.workshops, public.workshop_versions from public, anon, authenticated;
 grant select on public.workshops, public.workshop_versions to authenticated;
 
--- Problems that block "Ready to run" (1-based stage numbers). Empty means ready.
+-- Problems that block "Ready to run" (1-based activity numbers). Empty means
+-- ready. The result depends only on the agenda passed in.
 create function public.workshop_problems(p_content jsonb)
 returns text[]
 language plpgsql
@@ -154,27 +159,27 @@ set search_path = ''
 as $$
 declare
   v_problems text[] := '{}';
-  v_step jsonb;
+  v_activity jsonb;
   v_position bigint;
   v_target bigint;
   v_objective_ids text[];
-  v_step_ids text[];
-  v_minutes integer;
+  v_activity_ids text[];
+  v_minutes numeric;
 begin
   if not extensions.jsonb_matches_schema(public.workshop_content_schema(), p_content) then
     return array['The agenda is not in a valid format.'];
   end if;
   select coalesce(array_agg(o ->> 'id'), '{}') into v_objective_ids
   from jsonb_array_elements(p_content -> 'objectives') o;
-  select coalesce(array_agg(s ->> 'id' order by n), '{}') into v_step_ids
-  from jsonb_array_elements(p_content -> 'steps') with ordinality as t(s, n);
+  select coalesce(array_agg(a ->> 'id' order by n), '{}') into v_activity_ids
+  from jsonb_array_elements(p_content -> 'activities') with ordinality as t(a, n);
 
-  if cardinality(v_step_ids) = 0 then
-    v_problems := v_problems || 'Add at least one stage.'::text;
+  if cardinality(v_activity_ids) = 0 then
+    v_problems := v_problems || 'Add at least one activity.'::text;
   end if;
   if cardinality(v_objective_ids) <> (select count(distinct x) from unnest(v_objective_ids) x)
-    or cardinality(v_step_ids) <> (select count(distinct x) from unnest(v_step_ids) x) then
-    v_problems := v_problems || 'Objectives and stages need unique identifiers.'::text;
+    or cardinality(v_activity_ids) <> (select count(distinct x) from unnest(v_activity_ids) x) then
+    v_problems := v_problems || 'Objectives and activities need unique identifiers.'::text;
   end if;
   v_problems := v_problems || coalesce((
     select array_agg(format('Objective %s needs text.', n) order by n)
@@ -182,55 +187,56 @@ begin
     where o ->> 'text' !~ '[^[:space:]]'
   ), '{}');
 
-  for v_step, v_position in
-    select s, n from jsonb_array_elements(p_content -> 'steps') with ordinality as t(s, n)
+  for v_activity, v_position in
+    select a, n from jsonb_array_elements(p_content -> 'activities') with ordinality as t(a, n)
   loop
-    if v_step ->> 'title' !~ '[^[:space:]]' then
-      v_problems := v_problems || format('Stage %s needs a title.', v_position);
+    if v_activity ->> 'title' !~ '[^[:space:]]' then
+      v_problems := v_problems || format('Activity %s needs a title.', v_position);
     end if;
-    if v_step ->> 'instructions' !~ '[^[:space:]]' then
-      v_problems := v_problems || format('Stage %s needs instructions.', v_position);
+    if v_activity ->> 'instructions' !~ '[^[:space:]]' then
+      v_problems := v_problems || format('Activity %s needs instructions.', v_position);
     end if;
-    if jsonb_array_length(v_step -> 'outputs') = 0 then
-      v_problems := v_problems || format('Stage %s needs at least one answer field.', v_position);
+    if jsonb_array_length(v_activity -> 'outputs') = 0 then
+      v_problems := v_problems || format('Activity %s needs at least one answer field.', v_position);
     end if;
     if exists (
-      select 1 from jsonb_array_elements(v_step -> 'outputs') f
+      select 1 from jsonb_array_elements(v_activity -> 'outputs') f
       where f ->> 'label' !~ '[^[:space:]]'
     ) then
-      v_problems := v_problems || format('Stage %s has an answer field without a label.', v_position);
+      v_problems := v_problems || format('Activity %s has an answer field without a label.', v_position);
     end if;
     if (select count(*) <> count(distinct f ->> 'id')
-        from jsonb_array_elements(v_step -> 'outputs') f) then
-      v_problems := v_problems || format('Stage %s has duplicate answer fields.', v_position);
+        from jsonb_array_elements(v_activity -> 'outputs') f) then
+      v_problems := v_problems || format('Activity %s has duplicate answer fields.', v_position);
     end if;
-    if jsonb_typeof(v_step -> 'input') = 'object' then
-      v_target := array_position(v_step_ids, v_step -> 'input' ->> 'step');
+    if jsonb_typeof(v_activity -> 'input') = 'object' then
+      v_target := array_position(v_activity_ids, v_activity -> 'input' ->> 'activity');
       if v_target is null then
-        v_problems := v_problems || format('Stage %s uses input from a stage that no longer exists.', v_position);
+        v_problems := v_problems || format('Activity %s uses input from an activity that no longer exists.', v_position);
       elsif v_target >= v_position then
-        v_problems := v_problems || format('Stage %s can only use input from an earlier stage.', v_position);
+        v_problems := v_problems || format('Activity %s can only use input from an earlier activity.', v_position);
       elsif not exists (
         select 1
-        from jsonb_array_elements(p_content -> 'steps' -> (v_target::int - 1) -> 'outputs') f
-        where f ->> 'id' = v_step -> 'input' ->> 'field'
+        from jsonb_array_elements(p_content -> 'activities' -> (v_target::int - 1) -> 'outputs') f
+        where f ->> 'id' = v_activity -> 'input' ->> 'field'
       ) then
-        v_problems := v_problems || format('Stage %s uses an answer field that no longer exists.', v_position);
+        v_problems := v_problems || format('Activity %s uses an answer field that no longer exists.', v_position);
       end if;
     end if;
     if exists (
-      select 1 from jsonb_array_elements_text(v_step -> 'objectives') ref
+      select 1 from jsonb_array_elements_text(v_activity -> 'objectives') ref
       where not ref = any (v_objective_ids)
     ) then
-      v_problems := v_problems || format('Stage %s links an objective that no longer exists.', v_position);
+      v_problems := v_problems || format('Activity %s links an objective that no longer exists.', v_position);
     end if;
   end loop;
 
-  select coalesce(sum((s ->> 'minutes')::integer), 0) into v_minutes
-  from jsonb_array_elements(p_content -> 'steps') s;
+  -- numeric: JSON Schema accepts 10.0 as an integer.
+  select coalesce(sum((a ->> 'minutes')::numeric), 0) into v_minutes
+  from jsonb_array_elements(p_content -> 'activities') a;
   if v_minutes > 240 then
     v_problems := v_problems || format(
-      'The stages are planned for %s minutes; a session lasts at most 240 minutes (4 hours).',
+      'The activities are planned for %s minutes; a session lasts at most 240 minutes (4 hours).',
       v_minutes
     );
   end if;
@@ -258,7 +264,54 @@ begin
 end;
 $$;
 
-create function public.create_workshop(p_title text)
+-- Host helper: lock the caller's draft if it is still at the revision they
+-- loaded. A missing expected revision is never treated as a match.
+create function public.lock_current_draft(p_version uuid, p_expected_revision integer)
+returns public.workshop_versions
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_version public.workshop_versions;
+begin
+  select v.* into v_version from public.workshop_versions v where v.id = p_version for update;
+  if not found then
+    raise exception 'not_allowed' using errcode = '42501';
+  end if;
+  perform public.require_owned_workshop(v_version.workshop_id);
+  if v_version.state <> 'draft' then
+    raise exception 'version_ready' using errcode = 'P0001';
+  end if;
+  if p_expected_revision is null or v_version.revision <> p_expected_revision then
+    raise exception 'stale_draft' using errcode = 'P0001';
+  end if;
+  return v_version;
+end;
+$$;
+
+-- A retried or concurrent request with the same operation gets what the first
+-- one created; an operation used in another workspace is refused.
+create function public.workshop_for_operation(p_workspace uuid, p_operation uuid)
+returns public.workshops
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_workshop public.workshops;
+begin
+  select w.* into v_workshop from public.workshops w
+  where w.operation_id = p_operation and w.workspace_id = p_workspace;
+  if not found then
+    raise exception 'not_allowed' using errcode = '42501';
+  end if;
+  return v_workshop;
+end;
+$$;
+
+create function public.create_workshop(p_title text, p_operation uuid)
 returns public.workshops
 language plpgsql
 security definer
@@ -272,8 +325,13 @@ begin
   if v_workspace is null or not public.current_session_has_mfa() then
     raise exception 'not_allowed' using errcode = '42501';
   end if;
-  insert into public.workshops (workspace_id, title) values (v_workspace, p_title)
+  insert into public.workshops (workspace_id, title, operation_id)
+  values (v_workspace, p_title, p_operation)
+  on conflict (operation_id) do nothing
   returning * into v_workshop;
+  if not found then
+    return public.workshop_for_operation(v_workspace, p_operation);
+  end if;
   insert into public.workshop_versions (workshop_id, number) values (v_workshop.id, 1);
   return v_workshop;
 end;
@@ -281,7 +339,7 @@ $$;
 
 -- Saves the whole draft agenda if nobody saved it since the caller loaded it.
 create function public.save_workshop_draft(
-  p_version uuid, p_expected_updated_at timestamptz, p_content jsonb
+  p_version uuid, p_expected_revision integer, p_content jsonb
 )
 returns public.workshop_versions
 language plpgsql
@@ -289,63 +347,40 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_version public.workshop_versions;
+  v_version public.workshop_versions := public.lock_current_draft(p_version, p_expected_revision);
 begin
-  select v.* into v_version from public.workshop_versions v where v.id = p_version for update;
-  if not found then
-    raise exception 'not_allowed' using errcode = '42501';
-  end if;
-  perform public.require_owned_workshop(v_version.workshop_id);
-  if v_version.state <> 'draft' then
-    raise exception 'version_ready' using errcode = 'P0001';
-  end if;
-  if v_version.updated_at <> p_expected_updated_at then
-    raise exception 'stale_draft' using errcode = 'P0001';
-  end if;
   update public.workshop_versions
-  set content = p_content, updated_at = clock_timestamp()
-  where id = p_version
+  set content = p_content, revision = revision + 1, updated_at = now()
+  where id = v_version.id
   returning * into v_version;
   return v_version;
 end;
 $$;
 
-create function public.mark_workshop_ready(p_version uuid, p_expected_updated_at timestamptz)
+create function public.mark_workshop_ready(p_version uuid, p_expected_revision integer)
 returns public.workshop_versions
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
-  v_version public.workshop_versions;
-  v_problems text[];
+  v_version public.workshop_versions := public.lock_current_draft(p_version, p_expected_revision);
+  v_problems text[] := public.workshop_problems(v_version.content);
 begin
-  select v.* into v_version from public.workshop_versions v where v.id = p_version for update;
-  if not found then
-    raise exception 'not_allowed' using errcode = '42501';
-  end if;
-  perform public.require_owned_workshop(v_version.workshop_id);
-  if v_version.state <> 'draft' then
-    raise exception 'version_ready' using errcode = 'P0001';
-  end if;
-  if v_version.updated_at <> p_expected_updated_at then
-    raise exception 'stale_draft' using errcode = 'P0001';
-  end if;
-  v_problems := public.workshop_problems(v_version.content);
   if cardinality(v_problems) > 0 then
     raise exception 'not_ready'
       using errcode = 'P0001', detail = array_to_string(v_problems, E'\n');
   end if;
   update public.workshop_versions
-  set state = 'ready', ready_at = now(), updated_at = clock_timestamp()
-  where id = p_version
+  set state = 'ready', ready_at = now(), revision = revision + 1, updated_at = now()
+  where id = v_version.id
   returning * into v_version;
   return v_version;
 end;
 $$;
 
--- Editing after "Ready to run" starts from the latest version as a new draft;
--- an existing draft is reused.
+-- Editing after "Ready to run" starts from the latest ready version as a new
+-- draft; an existing draft is reused.
 create function public.new_workshop_draft(p_workshop uuid)
 returns public.workshop_versions
 language plpgsql
@@ -364,9 +399,11 @@ begin
     return v_version;
   end if;
   insert into public.workshop_versions (workshop_id, number, content)
-  select p_workshop, v.number + 1, v.content
+  select p_workshop,
+    (select max(n.number) + 1 from public.workshop_versions n where n.workshop_id = p_workshop),
+    v.content
   from public.workshop_versions v
-  where v.workshop_id = p_workshop
+  where v.workshop_id = p_workshop and v.state = 'ready'
   order by v.number desc
   limit 1
   returning * into v_version;
@@ -375,7 +412,8 @@ end;
 $$;
 
 -- Copies configuration only; workshops hold no participants, work or approvals.
-create function public.duplicate_workshop(p_workshop uuid)
+-- A retried request with the same operation returns the first copy.
+create function public.duplicate_workshop(p_workshop uuid, p_operation uuid)
 returns public.workshops
 language plpgsql
 security definer
@@ -385,9 +423,13 @@ declare
   v_source public.workshops := public.require_owned_workshop(p_workshop);
   v_copy public.workshops;
 begin
-  insert into public.workshops (workspace_id, title)
-  values (v_source.workspace_id, rtrim(left('Copy of ' || v_source.title, 120)))
+  insert into public.workshops (workspace_id, title, operation_id)
+  values (v_source.workspace_id, rtrim(left('Copy of ' || v_source.title, 120)), p_operation)
+  on conflict (operation_id) do nothing
   returning * into v_copy;
+  if not found then
+    return public.workshop_for_operation(v_source.workspace_id, p_operation);
+  end if;
   insert into public.workshop_versions (workshop_id, number, content)
   select v_copy.id, 1, v.content
   from public.workshop_versions v
@@ -404,19 +446,22 @@ revoke all on function
   public.keep_ready_versions_frozen(),
   public.workshop_problems(jsonb),
   public.require_owned_workshop(uuid),
-  public.create_workshop(text),
-  public.save_workshop_draft(uuid, timestamptz, jsonb),
-  public.mark_workshop_ready(uuid, timestamptz),
+  public.lock_current_draft(uuid, integer),
+  public.workshop_for_operation(uuid, uuid),
+  public.create_workshop(text, uuid),
+  public.save_workshop_draft(uuid, integer, jsonb),
+  public.mark_workshop_ready(uuid, integer),
   public.new_workshop_draft(uuid),
-  public.duplicate_workshop(uuid)
+  public.duplicate_workshop(uuid, uuid)
 from public, anon, authenticated;
--- workshop_problems is pure: the editor shows exactly what Ready to run enforces.
+-- workshop_problems depends only on its input: the editor shows exactly what
+-- Ready to run enforces.
 grant execute on function
   public.workshop_content_schema(),
   public.workshop_problems(jsonb),
-  public.create_workshop(text),
-  public.save_workshop_draft(uuid, timestamptz, jsonb),
-  public.mark_workshop_ready(uuid, timestamptz),
+  public.create_workshop(text, uuid),
+  public.save_workshop_draft(uuid, integer, jsonb),
+  public.mark_workshop_ready(uuid, integer),
   public.new_workshop_draft(uuid),
-  public.duplicate_workshop(uuid)
+  public.duplicate_workshop(uuid, uuid)
 to authenticated;

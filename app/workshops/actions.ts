@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { isSessionId as isId } from "../../lib/guest";
+import { isUuid } from "../../lib/ids";
 import { currentHost, SIGN_IN_UNAVAILABLE } from "../../lib/supabase";
 import type { FormState } from "../form";
 
@@ -16,25 +16,33 @@ async function ownerHost() {
 const UNAVAILABLE =
   "The workshop service is unavailable, so nothing was saved. Try again.";
 
+const text = (data: FormData, name: string) => {
+  const value = data.get(name);
+  return typeof value === "string" ? value : "";
+};
+
 export async function createWorkshop(
   _: FormState,
   data: FormData
 ): Promise<FormState> {
-  const raw = data.get("title");
-  const title = typeof raw === "string" ? raw.trim() : "";
+  const title = text(data, "title").trim();
   if ([...title].length < 1 || [...title].length > 120)
     return { error: "Enter a workshop title of 1 to 120 characters." };
+  // One operation per rendered form: a resubmitted form returns the same workshop.
+  const operation = text(data, "operation");
+  if (!isUuid(operation)) return { error: UNAVAILABLE };
   const host = await ownerHost();
   if (!host) return { error: SIGN_IN_UNAVAILABLE };
   const { data: workshop, error } = await host.supabase.rpc("create_workshop", {
     p_title: title,
+    p_operation: operation,
   });
   if (error) return { error: UNAVAILABLE };
   redirect(`/workshops/${workshop.id}`);
 }
 
 export type SaveResult =
-  { updatedAt: string } | { error: string; problems?: string[] };
+  { revision: number } | { error: string; problems?: string[] };
 
 const SAVE_ERRORS = {
   stale_draft:
@@ -52,61 +60,70 @@ const saveError = (message: string, details?: string): SaveResult => ({
     message === "not_ready" && details ? details.split("\n") : undefined,
 });
 
-// Saves the whole agenda; refused if someone saved since `expectedUpdatedAt`.
+const validRevision = (revision: number) =>
+  Number.isInteger(revision) && revision > 0;
+
+// Saves the whole agenda; refused if someone saved since `expectedRevision`.
 export async function saveWorkshopDraft(
   versionId: string,
-  expectedUpdatedAt: string,
+  expectedRevision: number,
   agenda: unknown
 ): Promise<SaveResult> {
-  if (!isId(versionId) || Number.isNaN(Date.parse(expectedUpdatedAt)))
+  if (!isUuid(versionId) || !validRevision(expectedRevision))
     return { error: UNAVAILABLE };
   // The database enforces the exact shape; this only bounds the request.
-  if (JSON.stringify(agenda ?? null).length > 200_000)
+  if (JSON.stringify(agenda ?? null).length > 400_000)
     return { error: "This agenda is too large to save." };
   const host = await ownerHost();
   if (!host) return { error: SIGN_IN_UNAVAILABLE };
   const { data, error } = await host.supabase.rpc("save_workshop_draft", {
     p_version: versionId,
-    p_expected_updated_at: expectedUpdatedAt,
+    p_expected_revision: expectedRevision,
     p_content: agenda,
   });
   if (error)
     return error.code === "23514"
       ? {
           error:
-            "Some stage settings are outside the allowed limits (for example, more than 240 minutes in one stage). Nothing was saved.",
+            "Some settings are outside the allowed limits, so nothing was saved. Check the planned minutes (1 to 240 per activity) and the lengths of the texts.",
         }
       : saveError(error.message);
-  return { updatedAt: data.updated_at };
+  return { revision: data.revision };
 }
 
 export async function markWorkshopReady(
   versionId: string,
-  expectedUpdatedAt: string
+  expectedRevision: number
 ): Promise<SaveResult> {
-  if (!isId(versionId) || Number.isNaN(Date.parse(expectedUpdatedAt)))
+  if (!isUuid(versionId) || !validRevision(expectedRevision))
     return { error: UNAVAILABLE };
   const host = await ownerHost();
   if (!host) return { error: SIGN_IN_UNAVAILABLE };
   const { data, error } = await host.supabase.rpc("mark_workshop_ready", {
     p_version: versionId,
-    p_expected_updated_at: expectedUpdatedAt,
+    p_expected_revision: expectedRevision,
   });
   if (error) return saveError(error.message, error.details);
-  return { updatedAt: data.updated_at };
+  return { revision: data.revision };
 }
 
-// Form actions for the read-only view: start a new draft or duplicate.
+// Form actions on the workshop page: start a new draft, or duplicate.
 export async function workshopCommand(data: FormData) {
-  const raw = data.get("workshop");
-  const workshopId = typeof raw === "string" ? raw : "";
-  if (!isId(workshopId)) redirect("/workspace");
+  const workshopId = text(data, "workshop");
+  if (!isUuid(workshopId)) redirect("/workspace");
+  const command = text(data, "command");
+  const operation = text(data, "operation");
+  if (
+    !["new-draft", "duplicate"].includes(command) ||
+    (command === "duplicate" && !isUuid(operation))
+  )
+    redirect(`/workshops/${workshopId}`);
   const host = await ownerHost();
   if (!host) redirect(`/workshops/${workshopId}?notice=unavailable`);
-  if (data.get("command") === "duplicate") {
+  if (command === "duplicate") {
     const { data: copy, error } = await host.supabase.rpc(
       "duplicate_workshop",
-      { p_workshop: workshopId }
+      { p_workshop: workshopId, p_operation: operation }
     );
     if (error) redirect(`/workshops/${workshopId}?notice=unavailable`);
     redirect(`/workshops/${copy.id}`);
