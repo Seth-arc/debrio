@@ -9,6 +9,7 @@ import { HostProblem } from "../../host-problem";
 import { updateSession } from "../actions";
 import type { Execution } from "../../../lib/execution";
 import { ExecutionPanel } from "../execution-panel";
+import { WorkPanel } from "../work-panel";
 import { CommandButton } from "../command-button";
 
 // The host's live view of one session; reads are limited by row policies.
@@ -187,6 +188,7 @@ export default async function HostSession({
       </p>
       {notice && <p role="alert">{notice}</p>}
       {execution && <ExecutionPanel initial={execution} host />}
+      {execution && <WorkPanel session={id} host />}
 
       {open && (
         <section aria-labelledby="link-heading">

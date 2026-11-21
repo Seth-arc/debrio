@@ -96,13 +96,20 @@ test("AC1–12: host confirms an agenda, guest follows one task, conflicting pre
   });
   await page.getByRole("button", { name: "Preview start" }).click();
   await page.getByRole("button", { name: "Confirm start" }).click();
-  await expect(guest.getByRole("heading", { name: "Task 1" })).toBeVisible();
+  await expect(
+    guest.getByRole("heading", { name: "Task 1", exact: true })
+  ).toBeVisible();
   await expect(guest.getByText("Host availability is unknown.")).toBeVisible();
   await expect(
     guest.getByText(/facilitator will start the session soon/)
   ).toHaveCount(0);
   await expect(guest.getByText("Consider example 2 privately.")).toHaveCount(0);
-  await expect(guest.getByRole("textbox")).toHaveCount(0);
+  await expect(
+    guest.getByLabel("Expected answer 1", { exact: true })
+  ).toBeVisible();
+  await expect(
+    guest.getByLabel("Expected answer 2", { exact: true })
+  ).toHaveCount(0);
   await expectAccessible(page);
   await expectAccessible(guest);
 
@@ -148,7 +155,9 @@ test("AC1–12: host confirms an agenda, guest follows one task, conflicting pre
   await page.getByRole("button", { name: "Preview next activity" }).click();
   const advance = Date.now();
   await page.getByRole("button", { name: "Confirm next activity" }).click();
-  await expect(guest.getByRole("heading", { name: "Task 2" })).toBeVisible();
+  await expect(
+    guest.getByRole("heading", { name: "Task 2", exact: true })
+  ).toBeVisible();
   timings.push(Date.now() - advance);
   await expect(
     page.getByRole("button", { name: "Preview next activity" })
@@ -160,12 +169,16 @@ test("AC1–12: host confirms an agenda, guest follows one task, conflicting pre
   ).toBeVisible();
   await guestContext.setOffline(false);
   const reconnect = Date.now();
-  await expect(guest.getByRole("heading", { name: "Task 2" })).toBeVisible({
+  await expect(
+    guest.getByRole("heading", { name: "Task 2", exact: true })
+  ).toBeVisible({
     timeout: 10_000,
   });
   const reconnectMs = Date.now() - reconnect;
   await guest.reload();
-  await expect(guest.getByRole("heading", { name: "Task 2" })).toBeVisible();
+  await expect(
+    guest.getByRole("heading", { name: "Task 2", exact: true })
+  ).toBeVisible();
   await page.getByRole("button", { name: "End session…", exact: true }).click();
   await page.getByRole("button", { name: "Confirm end session" }).click();
   await expect(

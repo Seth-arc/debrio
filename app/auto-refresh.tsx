@@ -10,7 +10,12 @@ export function AutoRefresh({ seconds }: { seconds: number }) {
   useEffect(() => {
     const timer = setInterval(() => {
       // A refresh must not interrupt a command's pending server-action response.
-      if (!document.querySelector('[data-pending="true"]')) router.refresh();
+      if (
+        !document.querySelector(
+          '[data-pending="true"], [data-work-protected="true"]'
+        )
+      )
+        router.refresh();
     }, seconds * 1000);
     return () => clearInterval(timer);
   }, [router, seconds]);

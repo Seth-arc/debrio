@@ -1,12 +1,12 @@
 # Debrio
 
-## Agenda execution (instructions only)
+## Agenda execution and individual work
 
 A ready version can prepare a lobby without starting a session. The host previews
 and confirms Start, can pause/resume the activity timer, preview/confirm the next
 activity, and explicitly end. Only individual activities without prior-answer
-inputs can run in this slice. Expected answer labels are guidance; answers are not
-collected. Groups, linked answers, live overrides and media are not enabled.
+inputs can run in this slice. Each admitted participant can save and submit private
+individual answers. Groups, linked answers, live overrides and media are not enabled.
 
 Execution is stored separately from admission. The selected ready version and
 four-hour deadline cannot change. Activity timer expiry only prompts. The database
@@ -47,7 +47,41 @@ does not reverse the migration or erase execution state; keep hosted starts
 disabled and retain the expiry dispatcher/access boundary until a compatible
 application is restored.
 
-Next.js application with host sign-in (email + password plus an authenticator app) and a personal workspace, backed by Supabase, plus an opt-in synthetic LiveKit media probe. Hosts can reset a forgotten password (email link plus authenticator) and change their password or email after a fresh authenticator code; email changes need confirmation from both addresses. Owners can create a session and share its join link: guests ask to join with just a name and wait in a lobby, and the host admits, denies or removes them, closes the lobby, replaces the link or ends the session. Guests need no account; their private credential stays in an HttpOnly cookie and the database stores only its hash. A guest who changes or loses a device asks again as a returning person (also while the lobby is closed, or within 90 days after the session ends); the host verifies them and restores their existing place, and the old device is told its place moved. Joining while signed in shows the account to the host as evidence but grants nothing. Owners can build reusable workshop agendas: objectives and ordered activities with instructions, individual or group scope, planned minutes, labelled answer fields and links to an earlier activity's answer. "Mark ready to run" freezes a validated version (the database enforces both the agenda's structure and its readiness); later edits start a new draft, and workshops can be duplicated. Individual, unlinked agendas support the instructions-only execution described above. The operator's authenticator reset and media authorization are not implemented yet.
+### Durable individual work
+
+The participant's stable session identity owns work. The author and authorized
+MFA host can read it; peers cannot. **Save draft** acknowledges a committed
+revision. Typing during saving remains unsaved until its own save succeeds.
+Conflicts retain local text and show the latest server draft for explicit
+reconciliation. Unsent text exists only in the open page; there is no offline cache.
+
+**Submit answers** freezes the selected saved revision as an immutable attempt.
+All declared fields are required for complete work (short: 500 Unicode code points;
+long: 5,000). A participant can explicitly submit nonempty incomplete work for
+review; a host can accept that exact version with a reason. Corrections create
+linked attempts. After activity advance, a host can reopen a named participant's
+earlier activity, with a reason. This does not rewind execution or extend its
+deadline. Pause permits current work; end closes every write window. Authorized
+read-only history remains within the original 90-day retention window.
+
+`POST /api/work` uses bounded (256 KiB), same-host JSON requests and server-side
+HttpOnly credentials. Current authority is checked before reads and receipt replay.
+The database commits each mutation and its operation receipt together. Lost
+responses retain the original operation for retry; old receipts do not replace
+newer state. No answer content is written to diagnostic logs or shared execution
+snapshots. Existing admission-only sessions collect no work.
+
+Apply the titled `20261121010000`, `20261121011000` and `20261121012000`
+migrations in order. Follow-ups preserve applied identities while tightening
+post-lock time checks and current host Auth session authority.
+For application rollback, retain these additive tables/functions and their access
+controls; do not reverse migrations or delete acknowledged work. The earlier
+instructions-only client cannot edit evidence, and compatible current clients can
+recover it when restored. Never force-refresh an active dirty editor to upgrade it.
+Physical retention cleanup/deletion operations and hosted readiness remain separate
+release gates. Manual screen-reader proof for these controls is still unverified.
+
+Next.js application with host sign-in (email + password plus an authenticator app) and a personal workspace, backed by Supabase, plus an opt-in synthetic LiveKit media probe. Hosts can reset a forgotten password (email link plus authenticator) and change their password or email after a fresh authenticator code; email changes need confirmation from both addresses. Owners can create a session and share its join link: guests ask to join with just a name and wait in a lobby, and the host admits, denies or removes them, closes the lobby, replaces the link or ends the session. Guests need no account; their private credential stays in an HttpOnly cookie and the database stores only its hash. A guest who changes or loses a device asks again as a returning person (also while the lobby is closed, or within 90 days after the session ends); the host verifies them and restores their existing place, and the old device is told its place moved. Joining while signed in shows the account to the host as evidence but grants nothing. Owners can build reusable workshop agendas: objectives and ordered activities with instructions, individual or group scope, planned minutes, labelled answer fields and links to an earlier activity's answer. "Mark ready to run" freezes a validated version (the database enforces both the agenda's structure and its readiness); later edits start a new draft, and workshops can be duplicated. Individual, unlinked agendas support execution and durable work as described above. The operator's authenticator reset and media authorization are not implemented yet.
 
 ## Run locally
 
