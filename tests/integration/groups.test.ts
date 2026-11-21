@@ -282,6 +282,11 @@ describe("non-media group assignment", { timeout: 60000 }, () => {
     ]);
     expect(assignment.error).toBeNull();
     expect(save.error).toBeNull();
+    expect((await x.read()).data.items[0]).toMatchObject({
+      participant: x.person,
+      content: x.request.content,
+      attempts: [],
+    });
     expect(
       (
         await client().rpc("read_groups", {
@@ -301,20 +306,74 @@ describe("non-media group assignment", { timeout: 60000 }, () => {
       )
     ).not.toContain(x.person);
   });
-  test("AC7/10: verified recovery preserves membership and rejects retired credentials; same name is new", async () => {
+  test("AC8: submission and advance races preserve exact individual evidence and ownership", async () => {
+    const x = await workFixture();
+    expect((await x.send()).error).toBeNull();
+    const read = async () =>
+      (await x.host.rpc("read_groups", { p_session: x.session, p_host: true }))
+        .data as GroupSnapshot;
+    const send = (p: unknown) =>
+      x.host.rpc("group_command", {
+        p_session: x.session,
+        p_operation: randomUUID(),
+        p_request: p,
+      });
+    const p = groupPlan(await read()),
+      key = randomUUID();
+    p.groups = [{ key, create: true }];
+    p.members = p.members.map((m) => ({ ...m, group: key }));
+    p.reason = "Coordinate while submitting";
+    const [assignment, submission] = await Promise.all([
+      send(p),
+      x.send(x.submit()),
+    ]);
+    expect(assignment.error).toBeNull();
+    expect(submission.error).toBeNull();
+    const evidence = () =>
+      sql(
+        `select encode(extensions.digest(jsonb_build_object('drafts',(select jsonb_agg(jsonb_build_object('owner',participant_id,'activity',activity_id,'content',content) order by participant_id,activity_id) from public.work_items where session_id='${x.session}'),'attempts',(select jsonb_agg(to_jsonb(a) order by id) from public.work_attempts a where session_id='${x.session}'))::text,'sha256'),'hex');`
+      ).trim();
+    const before = evidence();
+    const stored = (await x.read()).data.items[0];
+    expect(stored).toMatchObject({
+      participant: x.person,
+      content: x.request.content,
+    });
+    expect(stored.attempts).toHaveLength(1);
+    expect(stored.attempts[0]).toMatchObject({ content: x.request.content });
+    const next = groupPlan(await read());
+    next.members = next.members.map((m) => ({ ...m, group: null }));
+    next.reason = "Move during activity advance";
+    const [move, advance, save] = await Promise.all([
+      send(next),
+      command(x.host, x.session, 2, "next"),
+      x.send({ ...x.request, revision: 1 }),
+    ]);
+    expect(advance.error).toBeNull();
+    expect([null, "group_conflict"]).toContain(move.error?.message ?? null);
+    expect([null, "work_closed"]).toContain(save.error?.message ?? null);
+    expect(evidence()).toBe(before);
+    const current = await read();
+    expect(current.activity_index).toBe(1);
+    expect(current.members[0].group).toBe(
+      move.error ? current.groups![0].id : null
+    );
+  });
+  test("AC7/10: verified recovery races confirmation, preserves membership and rejects retired credentials; same name is new", async () => {
     const x = await fixture();
     await x.send(x.plan);
     const before = (await x.guest()).data;
     const returning = await guestJoins(x.key, "Return", { returning: true });
     const request = await participantId(x.host, x.sessionId);
-    expect(
-      (
-        await x.host.rpc("restore_participant", {
-          p_request: request,
-          p_target: x.people[0].id,
-        })
-      ).error
-    ).toBeNull();
+    const [recovery, confirmation] = await Promise.all([
+      x.host.rpc("restore_participant", {
+        p_request: request,
+        p_target: x.people[0].id,
+      }),
+      x.send(groupPlan(await x.snap())),
+    ]);
+    expect(recovery.error).toBeNull();
+    expect(confirmation.error).toBeNull();
     expect((await x.guest()).error).not.toBeNull();
     expect((await x.guest(returning.hash)).data).toEqual(before);
     const fresh = await guestJoins(x.key, "Synthetic Same");

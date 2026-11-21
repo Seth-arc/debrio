@@ -21,8 +21,16 @@ export type GroupSnapshot = {
     reason: string;
     source: string;
     created_at: string;
-    before_state: { members: { participant: string; group: string }[] };
-    after_state: { members: { participant: string; group: string }[] };
+    execution_revision: number;
+    activity_index: number;
+    before_state: {
+      groups: SessionGroup[];
+      members: { participant: string; group: string }[];
+    };
+    after_state: {
+      groups: SessionGroup[];
+      members: { participant: string; group: string }[];
+    };
   }[];
 };
 export type GroupPlan = {

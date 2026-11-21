@@ -479,16 +479,51 @@ export function GroupPanel({
                   {h.reason || "Prepared-session setup"} ·{" "}
                   {new Date(h.created_at).toLocaleString()}
                 </p>
+                <p>
+                  {h.activity_index < 0
+                    ? "Not started"
+                    : `Activity ${h.activity_index + 1}`}{" "}
+                  · execution revision {h.execution_revision}
+                </p>
                 <ul>
-                  {h.after_state.members.map((m) => (
-                    <li key={m.participant}>
-                      {m.participant.slice(0, 8)}:{" "}
-                      {h.before_state.members.find(
-                        (p) => p.participant === m.participant
-                      )?.group ?? "Unassigned"}{" "}
-                      → {m.group}
-                    </li>
-                  ))}
+                  {h.after_state.groups
+                    .filter(
+                      (g) => !h.before_state.groups.some((b) => b.id === g.id)
+                    )
+                    .map((g) => (
+                      <li key={g.id}>Created Group {g.ordinal}</li>
+                    ))}
+                  {h.before_state.groups
+                    .filter(
+                      (g) => !h.after_state.groups.some((a) => a.id === g.id)
+                    )
+                    .map((g) => (
+                      <li key={g.id}>Retired Group {g.ordinal}</li>
+                    ))}
+                  {[
+                    ...new Set(
+                      [...h.before_state.members, ...h.after_state.members].map(
+                        (m) => m.participant
+                      )
+                    ),
+                  ].map((participant) => {
+                    const before = h.before_state.members.find(
+                      (m) => m.participant === participant
+                    )?.group;
+                    const after = h.after_state.members.find(
+                      (m) => m.participant === participant
+                    )?.group;
+                    const groupLabel = (id: string | undefined) =>
+                      id
+                        ? `Group ${[...h.before_state.groups, ...h.after_state.groups].find((g) => g.id === id)!.ordinal}`
+                        : "Unassigned";
+                    return (
+                      <li key={participant}>
+                        {participant.slice(0, 8)}: {groupLabel(before)} →{" "}
+                        {groupLabel(after)}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             ))}
