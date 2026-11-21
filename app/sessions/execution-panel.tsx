@@ -183,7 +183,8 @@ export function ExecutionPanel({
             <p>
               This session has ended. {state.completed_count} of{" "}
               {state.activity_count} activities were advanced past; remaining
-              activities are unfinished. No answers were submitted.
+              activities are unfinished. Ending does not submit any additional
+              work.
             </p>
           )}
         </>
