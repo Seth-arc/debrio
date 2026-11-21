@@ -1,0 +1,101 @@
+-- Title: Align work whitespace validation
+-- Match JavaScript trim without changing the participant's stored text.
+create function public.work_nonblank(p_text text) returns boolean
+language sql immutable set search_path='' as $$
+  select p_text ~ U&'[^\0009-\000D\0020\00A0\1680\2000-\200A\2028\2029\202F\205F\3000\FEFF]';
+$$;
+revoke all on function public.work_nonblank(text) from public;
+
+create or replace function public.work_command(p_session uuid,p_operation uuid,p_request jsonb,p_credential_hash text default null) returns jsonb
+language plpgsql security definer set search_path='' as $$
+declare
+  cmd text:=p_request->>'command'; person uuid; actor uuid; is_host boolean;
+  e public.session_execution; s public.sessions; w public.work_items; old public.work_commands;
+  activity jsonb; field jsonb; normalized jsonb:='{}'; value text; missing text[]:='{}';
+  previous public.work_attempts; attempt public.work_attempts; reason text; digest text; receipt jsonb;
+begin
+  if p_request is null or jsonb_typeof(p_request)<>'object' or octet_length(p_request::text)>262144
+    or p_operation is null or cmd is null or cmd not in ('save','submit','submit_incomplete','accept_partial','reopen','close')
+    or p_request-ARRAY['command','participant','activity','version','revision','latest','window_revision','content','reason']<>'{}'::jsonb then
+    raise exception 'invalid_work';
+  end if;
+  person:=(p_request->>'participant')::uuid;
+  if person is null then raise exception 'not_allowed' using errcode='42501'; end if;
+  is_host:=cmd in ('accept_partial','reopen','close');
+  perform pg_advisory_xact_lock(hashtextextended(p_operation::text,0));
+  perform 1 from public.sessions where id=p_session for update;
+  actor:=public.authorize_work(p_session,person,p_credential_hash,is_host);
+  select * into e from public.session_execution where session_id=p_session;
+  select * into s from public.sessions where id=p_session;
+  s:=public.effective_session(s);
+  if e.session_id is null or e.version_id::text is distinct from p_request->>'version' then raise exception 'invalid_work'; end if;
+  select a.value into activity from public.workshop_versions v,
+    lateral jsonb_array_elements(v.content->'activities') with ordinality a
+    where v.id=e.version_id and a.value->>'id'=p_request->>'activity' and a.ordinality-1<=e.current_index;
+  if activity is null or activity->>'scope'<>'individual' or activity->'input'<>'null'::jsonb then raise exception 'work_closed'; end if;
+  if p_request ? 'reason' and jsonb_typeof(p_request->'reason')<>'string' then raise exception 'invalid_work'; end if;
+  reason:=replace(coalesce(p_request->>'reason',''),E'\r\n',E'\n');
+  if char_length(reason)>500 then raise exception 'invalid_work'; end if;
+  if cmd='save' then
+    if jsonb_typeof(p_request->'content') is distinct from 'object' then raise exception 'invalid_work'; end if;
+    if exists(select 1 from jsonb_object_keys(p_request->'content') k where not exists
+      (select 1 from jsonb_array_elements(activity->'outputs') f where f->>'id'=k)) then raise exception 'invalid_work'; end if;
+    for field in select f.value from jsonb_array_elements(activity->'outputs') f loop
+      if p_request->'content' ? (field->>'id') and jsonb_typeof(p_request->'content'->(field->>'id'))<>'string' then raise exception 'invalid_work'; end if;
+      value:=replace(coalesce(p_request->'content'->>(field->>'id'),''),E'\r\n',E'\n');
+      if char_length(value)>(case when field->>'kind'='short' then 500 else 5000 end) then raise exception 'invalid_work'; end if;
+      normalized:=normalized||jsonb_build_object(field->>'id',value);
+    end loop;
+    p_request:=jsonb_set(p_request,'{content}',normalized);
+  elsif p_request ? 'content' then raise exception 'invalid_work'; end if;
+  p_request:=jsonb_set(p_request,'{reason}',to_jsonb(reason));
+  digest:=encode(extensions.digest(p_request::text,'sha256'),'hex');
+  select * into old from public.work_commands where operation_id=p_operation;
+  if found then
+    if (old.session_id,old.participant_id,old.actor_id,old.request_digest) is distinct from (p_session,person,actor,digest) then raise exception 'operation_reused'; end if;
+    return old.receipt;
+  end if;
+  if s.state<>'open' or e.state not in ('live','paused') or e.deadline<=clock_timestamp() then raise exception 'work_closed'; end if;
+  insert into public.work_items(session_id,participant_id,activity_id,version_id)
+    values(p_session,person,activity->>'id',e.version_id) on conflict do nothing;
+  select * into w from public.work_items where session_id=p_session and participant_id=person and activity_id=activity->>'id' for update;
+  perform public.authorize_work(p_session,person,p_credential_hash,is_host);
+  if e.deadline<=clock_timestamp() then raise exception 'work_closed'; end if;
+  if w.window_revision is distinct from (p_request->>'window_revision')::integer then raise exception 'work_conflict'; end if;
+  if cmd in ('reopen','close') then
+    if activity->>'id'=(select content->'activities'->e.current_index->>'id' from public.workshop_versions where id=e.version_id)
+      or not public.work_nonblank(reason) then raise exception 'invalid_work'; end if;
+    update public.work_items set reopened=cmd='reopen',window_revision=window_revision+1
+      where session_id=p_session and participant_id=person and activity_id=w.activity_id;
+  else
+    if not w.reopened and activity->>'id'<>(select content->'activities'->e.current_index->>'id' from public.workshop_versions where id=e.version_id) then raise exception 'work_closed'; end if;
+    if cmd='save' then
+      if w.revision is distinct from (p_request->>'revision')::integer then raise exception 'work_conflict'; end if;
+      update public.work_items set content=normalized,revision=revision+1,saved_at=clock_timestamp()
+        where session_id=p_session and participant_id=person and activity_id=w.activity_id;
+    else
+      if w.latest is distinct from (p_request->>'latest')::integer then raise exception 'work_conflict'; end if;
+      select * into previous from public.work_attempts where session_id=p_session and participant_id=person and activity_id=w.activity_id and ordinal=w.latest;
+      if cmd='accept_partial' then
+        if previous.id is null or cardinality(previous.missing)=0 or not public.work_nonblank(reason)
+          or exists(select 1 from public.work_partial_acceptances where attempt_id=previous.id) then raise exception 'invalid_work'; end if;
+        insert into public.work_partial_acceptances(attempt_id,actor_id,reason) values(previous.id,actor,reason);
+      else
+        if w.revision=0 or w.revision is distinct from (p_request->>'revision')::integer then raise exception 'work_conflict'; end if;
+        if w.latest>0 and not public.work_nonblank(reason) then raise exception 'invalid_work'; end if;
+        select coalesce(array_agg(f->>'id'),'{}') into missing from jsonb_array_elements(activity->'outputs') f where not public.work_nonblank(coalesce(w.content->>(f->>'id'),''));
+        if cardinality(missing)=jsonb_array_length(activity->'outputs') or
+          (cmd='submit' and cardinality(missing)>0) or (cmd='submit_incomplete' and cardinality(missing)=0) then raise exception 'incomplete_work'; end if;
+        insert into public.work_attempts(session_id,participant_id,activity_id,submitted_by,ordinal,preceding_id,preceding_ordinal,draft_revision,content,missing,reason)
+          values(p_session,person,w.activity_id,person,w.latest+1,previous.id,previous.ordinal,w.revision,w.content,missing,reason) returning * into attempt;
+        update public.work_items set latest=latest+1 where session_id=p_session and participant_id=person and activity_id=w.activity_id;
+      end if;
+    end if;
+  end if;
+  select jsonb_build_object('revision',revision,'latest',latest,'window_revision',window_revision,'attempt',attempt.id) into receipt
+    from public.work_items where session_id=p_session and participant_id=person and activity_id=w.activity_id;
+  insert into public.work_commands(operation_id,session_id,participant_id,activity_id,actor_id,command,request_digest,reason,receipt)
+    values(p_operation,p_session,person,w.activity_id,actor,cmd,digest,reason,receipt);
+  return receipt;
+end;
+$$;

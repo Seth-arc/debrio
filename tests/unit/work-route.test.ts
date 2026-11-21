@@ -104,3 +104,18 @@ test("AC5: transport failure remains uncertain; database refusals are known and 
     uncertain: true,
   });
 });
+
+test("AC11: an Auth outage stays retryable and recovery resumes authorized reads", async () => {
+  currentHost.mockResolvedValue({ state: "unavailable" });
+  const response = await POST(request({ session, host: true }));
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({
+    error: "unavailable",
+    uncertain: false,
+  });
+  expect(rpc).not.toHaveBeenCalled();
+  currentHost.mockResolvedValue({ state: "aal2", supabase: { rpc } });
+  expect(await (await POST(request({ session, host: true }))).json()).toEqual({
+    snapshot: { items: [] },
+  });
+});

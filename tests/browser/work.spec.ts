@@ -190,6 +190,11 @@ test("AC4/5/11/12/14: lost acknowledgement, reconnect, navigation guard and read
   ).toBeVisible();
   await context.setOffline(true);
   await expect(guest.getByText(/Work service unavailable/)).toBeVisible();
+  // Cross the server-page refresh interval while the acknowledged draft is clean.
+  await guest.waitForTimeout(6500);
+  await expect(guest.getByLabel("Explanation 1", { exact: true })).toHaveValue(
+    "Acknowledged through retry"
+  );
   await context.setOffline(false);
   await expect(
     editor.getByRole("button", { name: "Save draft", exact: true })

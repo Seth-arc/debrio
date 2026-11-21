@@ -11,6 +11,7 @@ export function AutoRefresh({ seconds }: { seconds: number }) {
     const timer = setInterval(() => {
       // A refresh must not interrupt a command's pending server-action response.
       if (
+        navigator.onLine &&
         !document.querySelector(
           '[data-pending="true"], [data-work-protected="true"]'
         )

@@ -130,7 +130,17 @@ describe("durable individual work", { timeout: 60_000 }, () => {
     ).toBeNull();
     expect((await x.send(x.submit(2))).error?.message).toBe("incomplete_work");
     expect(
-      (await x.send({ ...x.submit(2), command: "submit_incomplete" })).error
+      (
+        await x.send({
+          ...x.request,
+          revision: 2,
+          content: { f1: "\uFEFF", f2: "\u00A0" },
+        })
+      ).error
+    ).toBeNull();
+    expect((await x.send(x.submit(3))).error?.message).toBe("incomplete_work");
+    expect(
+      (await x.send({ ...x.submit(3), command: "submit_incomplete" })).error
         ?.message
     ).toBe("incomplete_work");
     expect(
@@ -208,6 +218,9 @@ describe("durable individual work", { timeout: 60_000 }, () => {
       revision: 1,
       content: { f1: "Corrected", f2: "Yes" },
     });
+    expect((await x.send(x.submit(2, 1, "\uFEFF"))).error?.message).toBe(
+      "invalid_work"
+    );
     const corrections = await Promise.all([
       x.send(x.submit(2, 1, "Reconsidered")),
       x.send(x.submit(2, 1, "Competing")),

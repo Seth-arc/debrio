@@ -71,7 +71,7 @@ responses retain the original operation for retry; old receipts do not replace
 newer state. No answer content is written to diagnostic logs or shared execution
 snapshots. Existing admission-only sessions collect no work.
 
-Apply the titled `20261121010000`, `20261121011000` and `20261121012000`
+Apply the titled `20261121010000`, `20261121011000`, `20261121012000` and `20261121013000`
 migrations in order. Follow-ups preserve applied identities while tightening
 post-lock time checks and current host Auth session authority.
 For application rollback, retain these additive tables/functions and their access

@@ -83,6 +83,11 @@ export async function POST(request: Request) {
       hash: string | null = null;
     if (input.host) {
       const host = await currentHost();
+      if (host.state === "unavailable" || host.state === "unconfigured")
+        return reply(
+          { error: "unavailable", uncertain: command !== undefined },
+          503
+        );
       if (host.state !== "aal2") return reply({ error: "not_allowed" }, 403);
       supabase = host.supabase;
     } else {

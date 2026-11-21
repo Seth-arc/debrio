@@ -202,6 +202,14 @@ function WorkEditor({
             : "Open for work."
           : "Read only."}
       </p>
+      {item.saved_at && (
+        <p>
+          Last saved draft: revision {item.revision} at{" "}
+          <time dateTime={item.saved_at}>
+            {new Date(item.saved_at).toLocaleString()}
+          </time>
+        </p>
+      )}
       {host ? (
         <>
           <h4>Latest saved draft (revision {item.revision})</h4>
