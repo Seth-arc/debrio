@@ -118,7 +118,7 @@ export function ExecutionPanel({
       <h2 id="execution-heading" ref={title} tabIndex={-1}>
         Session activities
       </h2>
-      <p>Instructions-only execution. Answers are not collected here.</p>
+      <p>Individual work is saved and submitted separately below.</p>
       {!host && <p>Host availability is unknown.</p>}
       <p role="status">
         {stale
@@ -183,7 +183,8 @@ export function ExecutionPanel({
             <p>
               This session has ended. {state.completed_count} of{" "}
               {state.activity_count} activities were advanced past; remaining
-              activities are unfinished. No answers were submitted.
+              activities are unfinished. Ending does not submit any additional
+              work.
             </p>
           )}
         </>

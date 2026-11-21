@@ -9,6 +9,7 @@ import { guestSupabase } from "../../../lib/supabase";
 import { AutoRefresh } from "../../auto-refresh";
 import { HostProblem } from "../../host-problem";
 import type { Execution } from "../../../lib/execution";
+import { WorkPanel } from "../../sessions/work-panel";
 import { ExecutionPanel } from "../../sessions/execution-panel";
 
 // A guest's place in a session, checked against the database on every request.
@@ -123,6 +124,12 @@ export default async function GuestSession({
       <h1>{heading}</h1>
       <p role="status">{text}</p>
       {execution && <ExecutionPanel initial={execution} />}
+      {credential && (
+        <WorkPanel
+          session={sessionId}
+          enabled={place?.participant_state === "admitted"}
+        />
+      )}
       {executionResult?.error && (
         <p role="alert">The current activity is unavailable. Retrying…</p>
       )}
