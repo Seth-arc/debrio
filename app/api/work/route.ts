@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { credentialHash, guestCookieName } from "../../../lib/guest";
+import { readSessionRequest } from "../../../lib/session-request";
 import { isUuid } from "../../../lib/ids";
 import { currentHost, guestSupabase } from "../../../lib/supabase";
 import { validWorkText } from "../../../lib/work";
@@ -12,58 +13,13 @@ const reply = (body: object, status = 200) =>
 
 // A bounded same-origin JSON boundary: guest credentials never enter JS or URLs.
 export async function POST(request: Request) {
-  let origin: URL;
-  try {
-    origin = new URL(request.headers.get("origin") ?? "");
-  } catch {
-    return reply({ error: "not_allowed" }, 403);
-  }
-  // Next's internal request URL may use localhost behind the incoming Host.
-  if (
-    !["http:", "https:"].includes(origin.protocol) ||
-    origin.host !== request.headers.get("host") ||
-    request.headers.get("content-type") !== "application/json"
-  )
-    return reply({ error: "not_allowed" }, 403);
-  const reader = request.body?.getReader();
-  if (!reader) return reply({ error: "invalid_work" }, 400);
-  let input;
-  try {
-    const decoder = new TextDecoder("utf-8", { fatal: true });
-    let text = "",
-      size = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 262144) {
-        await reader.cancel();
-        return reply({ error: "invalid_work" }, 413);
-      }
-      text += decoder.decode(value, { stream: true });
-    }
-    text += decoder.decode();
-    input = JSON.parse(text);
-  } catch {
-    return reply({ error: "invalid_work" }, 400);
-  } finally {
-    reader.releaseLock();
-  }
-  if (
-    !input ||
-    typeof input !== "object" ||
-    Array.isArray(input) ||
-    !isUuid(input.session) ||
-    typeof input.host !== "boolean" ||
-    Object.keys(input).some(
-      (key) => !["session", "host", "operation", "request"].includes(key)
-    )
-  )
-    return reply({ error: "invalid_work" }, 400);
+  const parsed = await readSessionRequest(request, "invalid_work");
+  if (parsed.response) return parsed.response;
+  const { input } = parsed;
   const command = input.request;
   if (
     command !== undefined &&
-    (!isUuid(input.operation) ||
+    (!isUuid(input.operation ?? "") ||
       !command ||
       typeof command !== "object" ||
       Array.isArray(command) ||
