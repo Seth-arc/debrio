@@ -10,7 +10,12 @@ function Task({ activity }: { activity: Activity }) {
     <>
       <h3>{activity.title}</h3>
       <p className="instructions">{activity.instructions}</p>
-      <p>Each person alone · {activity.minutes} planned minutes</p>
+      <p>
+        {activity.scope === "group"
+          ? "Work in your assigned group"
+          : "Each person alone"}{" "}
+        · {activity.minutes} planned minutes
+      </p>
       <p>
         Expected answers:{" "}
         {activity.outputs.map((field) => field.label).join("; ")}
@@ -24,6 +29,10 @@ type Command = {
   revision: number;
   command: string;
   activity?: Activity;
+  context: string;
+  coordination?: Execution["coordination"];
+  groupBlockers: string[];
+  unfinished: NonNullable<Execution["unfinished"]>;
 };
 
 export function ExecutionPanel({
@@ -83,11 +92,12 @@ export function ExecutionPanel({
         state.session_id,
         request.operation,
         request.revision,
-        request.command
+        request.command,
+        request.context
       );
       setProblem(result.error ?? "");
       setRetry(result.uncertain ? request : null);
-      setPreview(null);
+      if (!result.error && !result.uncertain) setPreview(null);
       const fresh = await readExecution(state.session_id, host);
       setStale(!fresh.execution);
       if (fresh.execution) setState(fresh.execution);
@@ -100,7 +110,8 @@ export function ExecutionPanel({
     } finally {
       busy.current = false;
       setPending(false);
-      title.current?.focus();
+      if (previewHeading.current) previewHeading.current.focus();
+      else title.current?.focus();
     }
   };
   const request = (command: string): Command => ({
@@ -108,17 +119,22 @@ export function ExecutionPanel({
     revision: state.revision,
     operation: crypto.randomUUID(),
     activity: state.next ?? undefined,
+    context: state.context ?? "",
+    coordination: state.coordination,
+    groupBlockers: state.group_blockers ?? [],
+    unfinished: state.unfinished ?? [],
   });
   const closed = state.state === "completed";
   const disabled = stale || pending || !!retry;
-  const previewStale = preview?.revision !== state.revision;
+  const previewStale =
+    preview?.revision !== state.revision || preview?.context !== state.context;
 
   return (
     <section aria-labelledby="execution-heading" data-pending={pending}>
       <h2 id="execution-heading" ref={title} tabIndex={-1}>
         Session activities
       </h2>
-      <p>Individual work is saved and submitted separately below.</p>
+      <p>Work is saved and submitted separately below.</p>
       {!host && <p>Host availability is unknown.</p>}
       <p role="status">
         {stale
@@ -196,6 +212,14 @@ export function ExecutionPanel({
       )}
       {host && !closed && (
         <>
+          {state.next?.scope === "group" && (
+            <p role="status">
+              Group readiness:{" "}
+              {state.group_blockers?.length
+                ? state.group_blockers.join(" ")
+                : "ready."}
+            </p>
+          )}
           {state.blockers.length > 0 && (
             <ul>
               {state.blockers.map((item) => (
@@ -258,9 +282,56 @@ export function ExecutionPanel({
                 <>
                   <Task activity={preview.activity} />
                   <p>
-                    No groups, permissions or media will change. No answers will
-                    be submitted.
+                    Advancing closes ordinary editing of the previous activity.
+                    Saved drafts remain available to their authorized audience.
+                    No answers are submitted automatically.
                   </p>
+                  {preview.activity.scope === "group" && (
+                    <>
+                      <h4>Group readiness</h4>
+                      <ul>
+                        {preview.groupBlockers.map((p) => (
+                          <li key={p}>{p}</li>
+                        ))}
+                      </ul>
+                      {preview.coordination?.recorders.map((g) => (
+                        <div key={g.group}>
+                          <h4>Group {g.ordinal}</h4>
+                          <p>
+                            Recorder:{" "}
+                            {g.recorder
+                              ? `${preview.coordination?.roster.find((p) => p.participant === g.recorder)?.name ?? "Participant"} · ${g.recorder.slice(0, 8)}`
+                              : "Not selected"}
+                          </p>
+                          <ul>
+                            {preview.coordination?.roster
+                              .filter((p) => p.group === g.group)
+                              .map((p) => (
+                                <li key={p.participant}>
+                                  {p.name} · {p.participant.slice(0, 8)}
+                                </li>
+                              ))}
+                          </ul>
+                        </div>
+                      ))}
+                      <p>
+                        Unassigned:{" "}
+                        {preview.coordination?.roster
+                          .filter((p) => !p.group)
+                          .map(
+                            (p) => `${p.name} · ${p.participant.slice(0, 8)}`
+                          )
+                          .join(", ") || "None"}
+                      </p>
+                    </>
+                  )}
+                  {preview.unfinished.length > 0 && (
+                    <p role="status">
+                      Groups without a submitted source answer:{" "}
+                      {preview.unfinished.map((g) => g.ordinal).join(", ")}.
+                      Advancing leaves this work unfinished.
+                    </p>
+                  )}
                 </>
               )}
               {preview.command === "end" && (
@@ -276,6 +347,8 @@ export function ExecutionPanel({
                 disabled={
                   disabled ||
                   previewStale ||
+                  (preview.command !== "end" &&
+                    preview.groupBlockers.length > 0) ||
                   (preview.command === "start" && state.blockers.length > 0)
                 }
                 onClick={() => void execute(preview)}

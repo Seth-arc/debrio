@@ -18,7 +18,7 @@ export async function prepareSession(
     return { error: "Reload this form and try again." };
   const host = await currentHost();
   if (host.state !== "aal2") return { error: executionError("not_allowed") };
-  const result = await host.supabase.rpc("prepare_execution", {
+  const result = await host.supabase.rpc("prepare_execution_v2", {
     p_version: version,
     p_operation: operation,
   });
@@ -37,7 +37,7 @@ export async function readExecution(
   if (asHost) {
     const host = await currentHost();
     if (host.state !== "aal2") return { error: executionError("not_allowed") };
-    const { data, error } = await host.supabase.rpc("host_execution", {
+    const { data, error } = await host.supabase.rpc("host_execution_v2", {
       p_session: session,
     });
     return error || !data
@@ -60,23 +60,26 @@ export async function runExecution(
   session: string,
   operation: string,
   revision: number,
-  command: string
+  command: string,
+  context: string
 ): Promise<{ error?: string; uncertain?: boolean }> {
   if (
     !isUuid(session) ||
     !isUuid(operation) ||
     !Number.isInteger(revision) ||
     revision < 1 ||
+    !/^[a-f0-9]{64}$/.test(context) ||
     !["start", "pause", "resume", "next", "end"].includes(command)
   )
     return { error: "That command is invalid. Reload the session." };
   const host = await currentHost();
   if (host.state !== "aal2") return { error: executionError("not_allowed") };
-  const { error } = await host.supabase.rpc("execution_command", {
+  const { error } = await host.supabase.rpc("execution_command_v2", {
     p_session: session,
     p_operation: operation,
     p_revision: revision,
     p_command: command,
+    p_context: context,
   });
   // A transport failure may arrive after commit: preserve the operation for retry.
   return error

@@ -28,7 +28,7 @@ async function requestGroups(
   return response.json();
 }
 const notice =
-  "Current groupmates can see one another’s display names. Individual answers remain private to their author and the authorized host. Future group work needs a separate sharing policy; this is not publication approval.";
+  "Current groupmates can see one another’s display names. Group contributions follow the sharing notice in Group work. Individual answers remain private to their author and the authorized host. Assignment is not publication approval.";
 
 export function GroupPanel({
   session,
@@ -232,14 +232,18 @@ export function GroupPanel({
               </li>
             ))}
           </ul>
-          <p>Your individual activity and work permissions are unchanged.</p>
+          <p>
+            Individual answers remain private. Group work access follows your
+            current assignment.
+          </p>
         </div>
       ) : (
         <>
           <p>
             Current assignment revision {snapshot.revision}.{" "}
-            {snapshot.members.length} admitted people. Grouping does not move
-            media or share answers.
+            {snapshot.members.length} admitted people. Assignment controls group
+            work access; individual answers remain private and media is not
+            moved.
           </p>
           <ul>
             {(snapshot.groups ?? []).map((g) => (
@@ -412,7 +416,8 @@ export function GroupPanel({
                     {plan.activity_index < 0
                       ? "not started"
                       : plan.activity_index + 1}
-                    . Only assignment changes; individual work stays private and
+                    . Assignment updates group work access and clears a recorder
+                    who leaves their group. Individual work stays private and
                     media is not moved.
                   </p>
                   <ul>

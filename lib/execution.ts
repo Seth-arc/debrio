@@ -1,4 +1,5 @@
 import type { Activity } from "./agenda";
+import type { GroupCoordination } from "./group-work";
 
 export type Execution = {
   session_id: string;
@@ -18,6 +19,10 @@ export type Execution = {
   completed_count: number;
   activity_count: number;
   blockers: string[];
+  context?: string;
+  coordination?: GroupCoordination;
+  group_blockers?: string[];
+  unfinished?: { group: string; ordinal: number }[];
 };
 
 export const executionError = (message: string, details?: string) => {

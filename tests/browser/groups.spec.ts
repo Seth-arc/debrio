@@ -27,6 +27,8 @@ test("AC2/6/8: same-name peers keep private work across moves and history explai
     name: "Session groups",
     exact: true,
   });
+  await expect(panel).toContainText("2 admitted people.");
+  let assignmentRevision = 0;
   const confirm = async () => {
     await panel
       .getByLabel(/Reason for changing membership/)
@@ -36,6 +38,9 @@ test("AC2/6/8: same-name peers keep private work across moves and history explai
     await expect(
       panel.getByRole("button", { name: "Edit group assignment" })
     ).toBeVisible();
+    await expect(panel).toContainText(
+      `Current assignment revision ${++assignmentRevision}.`
+    );
   };
   await panel.getByRole("button", { name: "Edit group assignment" }).click();
   await panel.getByRole("button", { name: "Add group", exact: true }).click();
