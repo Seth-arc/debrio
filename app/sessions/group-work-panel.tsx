@@ -89,7 +89,7 @@ function ContributionEditor({
       <textarea
         id={inputId}
         value={text}
-        disabled={!writable}
+        readOnly={!writable}
         onChange={(e) => setText(e.target.value)}
         aria-invalid={!valid}
       />
@@ -381,7 +381,7 @@ function GroupEditor({
                     <textarea
                       id={`${editorId}-${f.id}`}
                       value={text[f.id] ?? ""}
-                      disabled={!writable || !recorder}
+                      readOnly={!writable || !recorder}
                       onChange={(e) =>
                         setText((previous) => ({
                           ...previous,

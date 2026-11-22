@@ -126,7 +126,7 @@ test("AC2/3/4/6/7/8/15: members contribute, recorder changes, immutable snapshot
   ).toHaveValue("Unsaved former-recorder text");
   await expect(
     originalEditor.getByLabel("Explanation 1 — group answer", { exact: true })
-  ).toBeDisabled();
+  ).not.toBeEditable();
   await peer
     .getByLabel("Explanation 1 — group answer", { exact: true })
     .fill("Ben refined the shared answer");
@@ -183,7 +183,15 @@ test("AC2/3/4/6/7/8/15: members contribute, recorder changes, immutable snapshot
   await expect(departedSlot).toHaveValue(
     "Unsaved contribution stays in this group"
   );
-  await expect(departedSlot).toBeDisabled();
+  await expect(departedSlot).not.toBeEditable();
+  await departedSlot.focus();
+  await x.guest.keyboard.press("Control+A");
+  await expect(departedSlot).toBeFocused();
+  expect(
+    await departedSlot.evaluate(
+      (field: HTMLTextAreaElement) => field.selectionEnd - field.selectionStart
+    )
+  ).toBe("Unsaved contribution stays in this group".length);
   await expect(
     x.guest
       .getByRole("region", { name: /^Group work Work 1 / })
@@ -194,6 +202,60 @@ test("AC2/3/4/6/7/8/15: members contribute, recorder changes, immutable snapshot
       })
       .getByLabel("Contribution text")
   ).toHaveValue("");
+  // The next preview must observe the assignment committed by the other panel.
+  await page.reload();
+  await page.getByRole("button", { name: "Preview next activity" }).click();
+  let releaseAdvance!: () => void;
+  const advanceGate = new Promise<void>((resolve) => {
+    releaseAdvance = resolve;
+  });
+  let advanceHeld = false;
+  await page.route("**/sessions/**", async (route) => {
+    if (
+      route.request().method() === "POST" &&
+      route.request().postData()?.includes('"next"')
+    ) {
+      advanceHeld = true;
+      await advanceGate;
+    }
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Confirm next activity" }).click();
+  try {
+    await expect.poll(() => advanceHeld).toBe(true);
+    const nextRecorder = page.getByRole("group", {
+      name: "Recorder for Group 2",
+      exact: true,
+    });
+    await nextRecorder.getByLabel("Choose recorder").selectOption({ index: 1 });
+    await nextRecorder
+      .getByLabel("Recorder change reason")
+      .fill("Appoint the moved member while advance is in flight");
+    await nextRecorder
+      .getByRole("button", { name: "Preview recorder change" })
+      .click();
+    await nextRecorder
+      .getByRole("button", { name: "Confirm recorder change" })
+      .click();
+    await expect(
+      nextRecorder.getByRole("button", { name: "Confirm recorder change" })
+    ).not.toBeVisible();
+  } finally {
+    releaseAdvance();
+  }
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "The session changed in another tab" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Preview activity change" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Confirm next activity" })
+  ).toBeDisabled();
+  await page.unroute("**/sessions/**");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.getByRole("button", { name: "Preview next activity" }).click();
   await page.getByRole("button", { name: "Confirm next activity" }).click();
   await x.guest

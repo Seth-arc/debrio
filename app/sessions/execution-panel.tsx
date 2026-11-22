@@ -97,7 +97,7 @@ export function ExecutionPanel({
       );
       setProblem(result.error ?? "");
       setRetry(result.uncertain ? request : null);
-      setPreview(null);
+      if (!result.error && !result.uncertain) setPreview(null);
       const fresh = await readExecution(state.session_id, host);
       setStale(!fresh.execution);
       if (fresh.execution) setState(fresh.execution);
@@ -110,7 +110,8 @@ export function ExecutionPanel({
     } finally {
       busy.current = false;
       setPending(false);
-      title.current?.focus();
+      if (previewHeading.current) previewHeading.current.focus();
+      else title.current?.focus();
     }
   };
   const request = (command: string): Command => ({
