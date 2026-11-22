@@ -19,19 +19,21 @@ async function prepare(page: Page, linked = false) {
       .getByLabel("Instructions")
       .fill(`Consider example ${n} privately.`);
     await activity.getByLabel("Answer 1 label").fill(`Expected answer ${n}`);
-    if (linked && n === 2)
+    if (linked && n === 2) {
+      await activity.getByLabel("Who works on it").selectOption("group");
       await activity
         .getByLabel("Builds on an earlier answer")
         .selectOption({ index: 1 });
+    }
   }
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByRole("status")).toHaveText("All changes saved.");
   await page.getByRole("button", { name: "Mark ready to run" }).click();
+  if (linked) return;
   await expect(page.getByText(/Version 1 is ready to run/)).toBeVisible();
   await page
     .getByRole("button", { name: "Prepare session from version 1" })
     .click();
-  if (linked) return;
   await expect(page).toHaveURL(/\/sessions\//);
   const id = page.url().split("/").at(-1)!;
   sql(`insert into public.execution_capacity values(true,100,clock_timestamp()+interval '1 hour') on conflict(singleton) do update set max_live=100,valid_until=excluded.valid_until;
@@ -210,7 +212,9 @@ test("AC2/7/12: unsupported agenda refusal and expiry handler authorization", as
   test.setTimeout(150_000);
   await prepare(page, true);
   await expect(
-    page.getByRole("alert").filter({ hasText: "needs a saved earlier answer" })
+    page.getByRole("alert").filter({
+      hasText: "requires input with the same individual or group ownership",
+    })
   ).toBeVisible();
   await expect(page).toHaveURL(/\/workshops\//);
   expect((await request.post("/api/execution/expire")).status()).toBe(401);

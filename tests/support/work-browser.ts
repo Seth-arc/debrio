@@ -5,10 +5,11 @@ import { sql } from "./database";
 export async function prepareWork(
   page: Page,
   browser: Browser,
-  options: { group?: boolean } = {}
+  options: { group?: boolean; linked?: boolean } = {}
 ) {
   if (options.group)
     sql("update public.group_work_capability set enabled=true;");
+  if (options.linked) sql("update public.input_capability set enabled=true;");
   await ownerWithWorkspace(page);
   await page.getByLabel("New workshop title").fill("Synthetic individual work");
   await page.getByLabel("New workshop title").press("Enter");
@@ -20,8 +21,12 @@ export async function prepareWork(
       .getByLabel("Instructions")
       .fill(`Consider synthetic example ${n}.`);
     await activity.getByLabel("Answer 1 label").fill(`Explanation ${n}`);
-    if (options.group && n === 1)
+    if (options.group && (n === 1 || options.linked))
       await activity.getByLabel("Who works on it").selectOption("group");
+    if (options.linked && n === 2)
+      await activity
+        .getByLabel("Builds on an earlier answer")
+        .selectOption("a1:f1");
     if (n === 1) {
       await activity.getByRole("button", { name: "Add answer field" }).click();
       await activity.getByLabel("Answer 2 label").fill("Decision");
@@ -38,14 +43,16 @@ export async function prepareWork(
   sql(`insert into public.execution_capacity values(true,1000,clock_timestamp()+interval '1 hour') on conflict(singleton) do update set max_live=1000,valid_until=excluded.valid_until;
     insert into public.execution_eligibility select workspace_id,clock_timestamp()+interval '1 hour' from public.sessions where id='${session}' on conflict(workspace_id) do update set valid_until=excluded.valid_until;`);
   const context = await browser.newContext(
-    options.group
+    options.group || options.linked
       ? {
           viewport: page.viewportSize(),
           isMobile: (page.viewportSize()?.width ?? 1280) < 600,
-          ...(process.env.GROUP_DEMO
+          ...(process.env.GROUP_DEMO || process.env.INPUT_DEMO
             ? {
                 recordVideo: {
-                  dir: ".artifacts/P2-03b/raw",
+                  dir: process.env.INPUT_DEMO
+                    ? ".artifacts/P2-03c/raw"
+                    : ".artifacts/P2-03b/raw",
                   size: { width: 1280, height: 720 },
                 },
               }

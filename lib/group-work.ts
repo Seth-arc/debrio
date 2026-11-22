@@ -133,6 +133,8 @@ export type GroupWorkReply = {
 };
 export function groupWorkError(code: string) {
   switch (code) {
+    case "input_access_required":
+      return "Input access needs host confirmation. Your own text is still here.";
     case "not_allowed":
       return "Access changed. Your local text stays here; this work is no longer available.";
     case "group_work_conflict":

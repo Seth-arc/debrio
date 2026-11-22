@@ -1,3 +1,4 @@
+import type { InputPreview } from "./inputs";
 import type { Activity } from "./agenda";
 import type { GroupCoordination } from "./group-work";
 
@@ -20,6 +21,8 @@ export type Execution = {
   activity_count: number;
   blockers: string[];
   context?: string;
+  inputs?: InputPreview | null;
+  ttl_ms?: number;
   coordination?: GroupCoordination;
   group_blockers?: string[];
   unfinished?: { group: string; ordinal: number }[];
@@ -30,6 +33,9 @@ export const executionError = (message: string, details?: string) => {
     return details;
   return (
     Object.entries({
+      input_unavailable: "Fixed inputs are temporarily unavailable.",
+      input_prerequisite:
+        "A required submitted source field is missing or needs explicit partial acceptance.",
       stale_execution:
         "The session changed in another tab. Review its current state before trying again.",
       invalid_transition:

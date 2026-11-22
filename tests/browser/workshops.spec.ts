@@ -92,6 +92,13 @@ test("a host builds, saves, reorders and freezes an agenda, then starts a new dr
   await expectAccessible(page);
   await saveDraft(page);
   await expect(
+    page.getByText(
+      "Activity 2 requires input with the same individual or group ownership."
+    )
+  ).toBeVisible();
+  await second.getByLabel("Who works on it").selectOption("individual");
+  await saveDraft(page);
+  await expect(
     page.getByText("As last saved, nothing blocks running this agenda.")
   ).toBeVisible();
 

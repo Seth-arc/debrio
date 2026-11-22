@@ -11,10 +11,15 @@ import type {
   GroupWorkSnapshot,
 } from "../../lib/group-work";
 
-export async function groupWorkFixture(start = true, mixed = false) {
+export async function groupWorkFixture(
+  start = true,
+  mixed = false,
+  linked = false
+) {
   sql(
     "update public.group_work_capability set enabled=true; insert into public.execution_capacity values(true,1000,clock_timestamp()+interval '1 hour') on conflict(singleton) do update set max_live=1000,valid_until=excluded.valid_until;"
   );
+  if (linked) sql("update public.input_capability set enabled=true;");
   const owner = await hostWithSession();
   const content = agenda();
   content.activities[0].scope = "group";
@@ -23,6 +28,10 @@ export async function groupWorkFixture(start = true, mixed = false) {
     label: "Short answer",
     kind: "short",
   });
+  if (linked) {
+    content.activities[1].scope = "group";
+    content.activities[1].input = { activity: "a1", field: "f1" };
+  }
   if (mixed)
     content.activities.unshift({
       ...agenda().activities[0],
@@ -30,10 +39,13 @@ export async function groupWorkFixture(start = true, mixed = false) {
       title: "Private warmup",
     });
   const version = await readyVersion(owner.host, content);
-  const prepared = await owner.host.rpc("prepare_execution_v2", {
-    p_version: version.id,
-    p_operation: randomUUID(),
-  });
+  const prepared = await owner.host.rpc(
+    linked ? "prepare_execution_v3" : "prepare_execution_v2",
+    {
+      p_version: version.id,
+      p_operation: randomUUID(),
+    }
+  );
   expect(prepared.error).toBeNull();
   const sessionId = prepared.data as string;
   const { data: session } = await owner.host
@@ -107,19 +119,26 @@ export async function groupWorkFixture(start = true, mixed = false) {
   expect((await recorder(0)).error).toBeNull();
   const execute = async (command: string, context?: string) => {
     const snap = await read();
-    return owner.host.rpc("execution_command_v2", {
-      p_session: sessionId,
-      p_operation: randomUUID(),
-      p_revision: snap.coordination!.execution,
-      p_command: command,
-      p_context: context ?? snap.context,
-    });
+    const linkedState = linked
+      ? await owner.host.rpc("host_execution_v3", { p_session: sessionId })
+      : null;
+    if (linkedState) expect(linkedState.error).toBeNull();
+    return owner.host.rpc(
+      linked ? "execution_command_v3" : "execution_command_v2",
+      {
+        p_session: sessionId,
+        p_operation: randomUUID(),
+        p_revision: snap.coordination!.execution,
+        p_command: command,
+        p_context: context ?? linkedState?.data?.context ?? snap.context,
+      }
+    );
   };
   if (start) expect((await execute("start")).error).toBeNull();
-  const draft = async (person?: number, group = groups[0]) => {
+  const draft = async (person?: number, group = groups[0], activity = "a1") => {
     const s = await read(person);
     const item = s.items.find(
-      (x) => x.group === group && x.activity.id === "a1"
+      (x) => x.group === group && x.activity.id === activity
     );
     expect(item?.draft_access).toBe(true);
     return { snapshot: s, item: item as GroupDraft };
@@ -134,7 +153,8 @@ export async function groupWorkFixture(start = true, mixed = false) {
       ["reopen", "close", "accept_partial"].includes(command)
         ? undefined
         : person,
-      group
+      group,
+      extras.activity ?? "a1"
     );
     return {
       command,

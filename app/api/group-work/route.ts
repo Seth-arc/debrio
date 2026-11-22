@@ -81,6 +81,7 @@ export async function POST(request: Request) {
     if (error) {
       const known = [
         "not_allowed",
+        "input_access_required",
         "group_work_closed",
         "group_work_conflict",
         "operation_reused",
