@@ -1,3 +1,4 @@
+import { GroupWorkPanel } from "../group-work-panel";
 import { GroupPanel } from "../group-panel";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
@@ -134,7 +135,7 @@ export default async function HostSession({
       .eq("id", id)
       .maybeSingle(),
     host.supabase.rpc("session_people", { p_session: id }),
-    host.supabase.rpc("host_execution", { p_session: id }),
+    host.supabase.rpc("host_execution_v2", { p_session: id }),
   ]);
   if (
     sessionResult.error ||
@@ -191,6 +192,7 @@ export default async function HostSession({
       {execution && <ExecutionPanel initial={execution} host />}
       {execution && <GroupPanel session={id} host />}
       {execution && <WorkPanel session={id} host />}
+      {execution && <GroupWorkPanel session={id} host />}
 
       {open && (
         <section aria-labelledby="link-heading">

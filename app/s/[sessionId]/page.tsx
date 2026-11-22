@@ -1,3 +1,4 @@
+import { GroupWorkPanel } from "../../sessions/group-work-panel";
 import { GroupPanel } from "../../sessions/group-panel";
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
@@ -133,6 +134,12 @@ export default async function GuestSession({
       )}
       {credential && (
         <WorkPanel
+          session={sessionId}
+          enabled={place?.participant_state === "admitted"}
+        />
+      )}
+      {credential && (
+        <GroupWorkPanel
           session={sessionId}
           enabled={place?.participant_state === "admitted"}
         />

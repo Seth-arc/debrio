@@ -27,6 +27,7 @@ test("AC2/6/8: same-name peers keep private work across moves and history explai
     name: "Session groups",
     exact: true,
   });
+  await expect(panel).toContainText("2 admitted people.");
   const confirm = async () => {
     await panel
       .getByLabel(/Reason for changing membership/)

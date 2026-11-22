@@ -7,7 +7,7 @@ import {
 import { sql } from "../support/database";
 import { localSupabaseEnv } from "../../scripts/local-supabase";
 
-async function prepare(page: Page, group = false) {
+async function prepare(page: Page, linked = false) {
   await ownerWithWorkspace(page);
   await page.getByLabel("New workshop title").fill("Synthetic agenda run");
   await page.getByLabel("New workshop title").press("Enter");
@@ -19,8 +19,10 @@ async function prepare(page: Page, group = false) {
       .getByLabel("Instructions")
       .fill(`Consider example ${n} privately.`);
     await activity.getByLabel("Answer 1 label").fill(`Expected answer ${n}`);
-    if (group && n === 2)
-      await activity.getByLabel("Who works on it").selectOption("group");
+    if (linked && n === 2)
+      await activity
+        .getByLabel("Builds on an earlier answer")
+        .selectOption({ index: 1 });
   }
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByRole("status")).toHaveText("All changes saved.");
@@ -29,7 +31,7 @@ async function prepare(page: Page, group = false) {
   await page
     .getByRole("button", { name: "Prepare session from version 1" })
     .click();
-  if (group) return;
+  if (linked) return;
   await expect(page).toHaveURL(/\/sessions\//);
   const id = page.url().split("/").at(-1)!;
   sql(`insert into public.execution_capacity values(true,100,clock_timestamp()+interval '1 hour') on conflict(singleton) do update set max_live=100,valid_until=excluded.valid_until;
@@ -208,7 +210,7 @@ test("AC2/7/12: unsupported agenda refusal and expiry handler authorization", as
   test.setTimeout(150_000);
   await prepare(page, true);
   await expect(
-    page.getByRole("alert").filter({ hasText: "needs group-work support" })
+    page.getByRole("alert").filter({ hasText: "needs a saved earlier answer" })
   ).toBeVisible();
   await expect(page).toHaveURL(/\/workshops\//);
   expect((await request.post("/api/execution/expire")).status()).toBe(401);
