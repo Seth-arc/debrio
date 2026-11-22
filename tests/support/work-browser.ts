@@ -61,11 +61,17 @@ export async function prepareWork(
   await guest.getByLabel("Your name").press("Enter");
   await page.getByRole("button", { name: "Admit Synthetic Ada" }).click();
   await expect(guest.getByRole("heading", { name: "You're in" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Admit Synthetic Ada" })
+  ).toHaveCount(0);
+  // Guest admission does not synchronize the host panels' separate snapshots.
+  await page.reload();
   if (options.group) {
     const groups = page.getByRole("region", {
       name: "Session groups",
       exact: true,
     });
+    await expect(groups).toContainText("1 admitted people.");
     await groups.getByRole("button", { name: "Edit group assignment" }).click();
     await groups
       .getByRole("button", { name: "Add group", exact: true })
@@ -93,6 +99,12 @@ export async function prepareWork(
   }
   await page.getByRole("button", { name: "Preview start" }).click();
   await page.getByRole("button", { name: "Confirm start" }).click();
+  await expect(
+    page
+      .getByRole("region", { name: "Session activities" })
+      .getByRole("status")
+      .filter({ hasText: /^Session / })
+  ).toContainText("Session live.");
   await expect(
     guest.getByLabel(
       options.group ? "Explanation 1 — group answer" : "Explanation 1",

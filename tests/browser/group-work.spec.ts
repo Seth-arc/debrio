@@ -297,6 +297,7 @@ test("AC5/11/15: pending typing, exact unknown retry, conflict and one navigatio
   await x.guest.route("**/api/group-work", async (route) => {
     if (route.request().postDataJSON().request?.command === "answer") {
       const response = await route.fetch();
+      expect((await response.json()).receipt?.committed).toBe(true);
       committed = true;
       await held;
       await route.fulfill({ response });
@@ -317,6 +318,9 @@ test("AC5/11/15: pending typing, exact unknown retry, conflict and one navigatio
   await expect(
     x.guest.getByRole("button", { name: "Save group answer", exact: true })
   ).toBeEnabled();
+  await expect(
+    x.guest.getByText(/^Declared authors: Synthetic Ada/)
+  ).toHaveCount(2);
   await x.guest.unroute("**/api/group-work");
   let dropped = false;
   const operations: unknown[] = [];
@@ -326,7 +330,8 @@ test("AC5/11/15: pending typing, exact unknown retry, conflict and one navigatio
       operations.push(body);
       if (!dropped) {
         dropped = true;
-        await route.fetch();
+        const response = await route.fetch();
+        expect((await response.json()).receipt?.committed).toBe(true);
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -376,6 +381,7 @@ test("AC5/11/15: pending typing, exact unknown retry, conflict and one navigatio
   await other
     .getByRole("button", { name: "Save group answer", exact: true })
     .click();
+  await expect(other.getByText(/Saved revision 3 at/)).toBeVisible();
   await expect(
     x.guest.getByText("Conflict — compare before saving", { exact: true })
   ).toBeVisible();
