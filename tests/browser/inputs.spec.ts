@@ -139,6 +139,27 @@ test("fixed inputs: exact preview, read-only delivery, revocation, delayed repli
     .click();
   await expect(hostInput).toContainText("Result unknown");
   await page.unrouteAll({ behavior: "wait" });
+  let emptyRead = false;
+  await page.route("**/api/inputs", async (route) => {
+    const response = await route.fetch();
+    const result = await response.json();
+    result.snapshot = {
+      ...result.snapshot,
+      current: null,
+      items: [],
+      preview: null,
+    };
+    emptyRead = true;
+    await route.fulfill({ response, json: result });
+  });
+  await expect.poll(() => emptyRead).toBe(true);
+  await expect(
+    hostInput.getByRole("button", { name: "Retry input request" })
+  ).toBeEnabled();
+  await expect(
+    hostInput.getByLabel("Reason for input access change")
+  ).toHaveValue("Fresh exact-field confirmation");
+  await page.unrouteAll({ behavior: "wait" });
   await hostInput.getByRole("button", { name: "Retry input request" }).click();
   await expect(hostInput).toContainText("Input access updated.");
   await expect(inputs.locator("[data-input-value]")).toHaveText(

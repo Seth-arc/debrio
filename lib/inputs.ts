@@ -21,9 +21,9 @@ export type InputField = {
   authors: string[];
   acceptance: {
     attempt: string;
-    actor: string;
-    reason: string;
-    accepted_at: string;
+    actor?: string;
+    reason?: string;
+    accepted_at?: string;
   } | null;
 };
 export type InputPreview = {

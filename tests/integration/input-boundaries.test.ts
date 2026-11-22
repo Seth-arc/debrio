@@ -112,9 +112,8 @@ test("latest incomplete corrections never fall back; exact partial acceptance an
   expect(acceptance.error).toBeNull();
   expect((await x.execute("next")).error).toBeNull();
   expect((await x.read()).data.items[0].source.ordinal).toBe(2);
-  expect((await x.read()).data.items[0].source.acceptance.reason).toBe(
-    "Accept this exact partial"
-  );
+  const input = (await x.read()).data.items[0].source;
+  expect(input.acceptance).toEqual({ attempt: input.attempt });
 }, 60_000);
 
 test("receipt failure rolls back transition, bindings and all grants; concurrent confirmations have one winner", async () => {

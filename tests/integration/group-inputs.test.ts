@@ -13,9 +13,31 @@ afterEach(() =>
 test("same-group grants reveal only a selected field to a new non-contributor; intervals never revive", async () => {
   const x = await groupWorkFixture(true, false, true);
   expect((await x.move(2, x.groups[1])).error).toBeNull();
-  await x.save("Exact original group field");
-  const submitted = await x.send(await x.request("submit"));
+  expect(
+    (
+      await x.send(
+        await x.request("answer", {
+          revision: 0,
+          content: { f1: "Exact original group field", f2: "" },
+          sources: {},
+        })
+      )
+    ).error
+  ).toBeNull();
+  const submitted = await x.send(
+    await x.request("submit_incomplete", { reason: "Private submission note" })
+  );
   expect(submitted.error).toBeNull();
+  expect(
+    (
+      await x.send(
+        await x.request("accept_partial", {
+          reason: "Private acceptance note about the unshared answer",
+        }),
+        null
+      )
+    ).error
+  ).toBeNull();
   expect((await x.move(2, x.groups[0])).error).toBeNull();
   expect((await x.execute("next")).error).toBeNull();
   const read = () =>
@@ -26,6 +48,19 @@ test("same-group grants reveal only a selected field to a new non-contributor; i
   const input = await read();
   expect(input.error).toBeNull();
   expect(input.data.items[0].source.value).toBe("Exact original group field");
+  expect(input.data.items[0].source.acceptance).toEqual({
+    attempt: submitted.data.attempt,
+  });
+  expect(JSON.stringify(input.data)).not.toContain("Private acceptance note");
+  expect(JSON.stringify(input.data)).not.toContain("Private submission note");
+  const hostInput = await x.host.rpc("read_inputs", {
+    p_session: x.sessionId,
+    p_host: true,
+  });
+  expect(hostInput.error).toBeNull();
+  expect(hostInput.data.items[0].source.acceptance.reason).toBe(
+    "Private acceptance note about the unshared answer"
+  );
   expect(Object.keys(input.data.items[0].source).sort()).toEqual(
     [
       "acceptance",

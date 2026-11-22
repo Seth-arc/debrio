@@ -197,6 +197,9 @@ begin
     if not p_host and g.id is null then continue; end if;
     projection:=public.input_field_projection(b.attempt_id,b.field_id);
     if projection is null then continue; end if;
+    if not p_host and projection->'acceptance'<>'null'::jsonb then
+      projection:=jsonb_set(projection,'{acceptance}',jsonb_build_object('attempt',projection->'acceptance'->>'attempt'));
+    end if;
     items:=items||jsonb_build_array(jsonb_build_object('binding',b.id,'activity',b.activity_id,'grant',g.id,'interval',g.interval_id,'source',projection,
       'grants',case when p_host then (select coalesce(jsonb_agg(jsonb_build_object('id',ig.id,'participant',ig.participant_id,'interval',ig.interval_id,'valid',public.input_grant_valid(ig.id)) order by ig.created_at),'[]'::jsonb) from public.input_grants ig where ig.binding_id=b.id) else null end));
   end loop;

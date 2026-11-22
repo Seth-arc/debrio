@@ -31,7 +31,10 @@ export function InputSource({ source }: { source: InputField }) {
       </p>
       <p>Declared field authors: {source.authors.join(", ") || "None"}.</p>
       {source.acceptance && (
-        <p>Accepted partial submission: {source.acceptance.reason}</p>
+        <p>
+          Accepted partial submission
+          {source.acceptance.reason ? `: ${source.acceptance.reason}` : "."}
+        </p>
       )}
     </div>
   );
@@ -100,7 +103,7 @@ export function InputPanel({
   host?: boolean;
   endpoint?: string;
 }) {
-  const [snapshot, setSnapshot] = useState<InputSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<InputSnapshot | null>();
   const [problem, setProblem] = useState("");
   const [reason, setReason] = useState("");
   const [preview, setPreview] = useState<InputCommand | null>(null);
@@ -239,6 +242,17 @@ export function InputPanel({
   const missing =
     snapshot?.current?.input &&
     !snapshot.items.some((i) => i.activity === snapshot.current?.id);
+  if (
+    snapshot === undefined ||
+    (snapshot &&
+      !snapshot.current?.input &&
+      snapshot.items.length === 0 &&
+      !preview &&
+      !retry &&
+      !pending &&
+      !reason)
+  )
+    return null;
   return (
     <section
       aria-labelledby="input-heading"
