@@ -9,7 +9,8 @@ test("fixed inputs: exact preview, read-only delivery, revocation, delayed repli
 }) => {
   test.setTimeout(240_000);
   const x = await prepareWork(page, browser, { linked: true });
-  const errors = collectErrors(x.guest);
+  // The offline scenarios intentionally fail any poll already in flight.
+  const errors = collectErrors(x.guest, "net::ERR_INTERNET_DISCONNECTED");
   const editor = x.guest.getByRole("region", {
     name: "Work 1 — current activity",
     exact: true,

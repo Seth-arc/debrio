@@ -23,15 +23,24 @@ export const formError = (page: Page) =>
 // Auth may append its error in the URL fragment; the path and query are what we control.
 export const CONFIRM_FAILED = /\/sign-in\?confirm=failed(#|$)/;
 
-export function collectErrors(page: Page) {
+export function collectErrors(page: Page, expectedNetworkError?: string) {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
+    if (
+      message.type() === "error" &&
+      (!expectedNetworkError ||
+        message.text() !== `Failed to load resource: ${expectedNetworkError}`)
+    )
+      errors.push(message.text());
   });
   page.on("requestfailed", (request) => {
     // Navigations cancel in-flight route prefetches; that is not an app failure.
-    if (request.failure()?.errorText !== "net::ERR_ABORTED")
+    const failure = request.failure()?.errorText;
+    if (
+      failure !== "net::ERR_ABORTED" &&
+      (!expectedNetworkError || failure !== expectedNetworkError)
+    )
       errors.push(request.url());
   });
   return errors;
