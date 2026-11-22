@@ -1,5 +1,7 @@
 "use client";
 
+import { invalidateInputReads } from "../../lib/inputs";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   validWorkText,
@@ -24,7 +26,13 @@ async function requestWork(
     body: JSON.stringify({ session, host, operation, request }),
     cache: "no-store",
   });
-  return response.json();
+  const result: WorkReply = await response.json();
+  if (
+    result.error === "not_allowed" ||
+    result.error === "input_access_required"
+  )
+    invalidateInputReads(session);
+  return result;
 }
 
 function Answers({

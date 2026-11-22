@@ -1,5 +1,7 @@
 "use client";
 
+import { invalidateInputReads } from "../../lib/inputs";
+
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { AnswerField } from "../../lib/agenda";
 import { validWorkText, workText } from "../../lib/work";
@@ -32,7 +34,13 @@ async function call(
     body: JSON.stringify({ session, host, operation, request }),
     cache: "no-store",
   });
-  return response.json();
+  const result: GroupWorkReply = await response.json();
+  if (
+    result.error === "not_allowed" ||
+    result.error === "input_access_required"
+  )
+    invalidateInputReads(session);
+  return result;
 }
 
 function ContributionEditor({

@@ -1,3 +1,4 @@
+import { InputPanel } from "../input-panel";
 import { GroupWorkPanel } from "../group-work-panel";
 import { GroupPanel } from "../group-panel";
 import type { Metadata } from "next";
@@ -191,6 +192,7 @@ export default async function HostSession({
       {notice && <p role="alert">{notice}</p>}
       {execution && <ExecutionPanel initial={execution} host />}
       {execution && <GroupPanel session={id} host />}
+      {execution && <InputPanel session={id} host />}
       {execution && <WorkPanel session={id} host />}
       {execution && <GroupWorkPanel session={id} host />}
 

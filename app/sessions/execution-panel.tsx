@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { Activity } from "../../lib/agenda";
 import { scheduleVariance, type Execution } from "../../lib/execution";
 import { readExecution, runExecution } from "./execution-actions";
+import { InputPreviewDetails } from "./input-panel";
+import { inputReadDeadline } from "../../lib/inputs";
 
 function Task({ activity }: { activity: Activity }) {
   return (
@@ -51,31 +53,83 @@ export function ExecutionPanel({
   const busy = useRef(false);
   const previewHeading = useRef<HTMLHeadingElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
+  const generation = useRef(0);
+  const expires = useRef(0);
 
   useEffect(() => {
     let alive = true;
-    let timer: ReturnType<typeof setTimeout>;
+    const fence = generation;
+    let inFlight: number | null = null;
+    const clear = () => {
+      generation.current++;
+      inFlight = null;
+      expires.current = 0;
+      setStale(true);
+      setState((s) => ({ ...s, inputs: null }));
+    };
     const poll = async () => {
-      if (!busy.current) {
+      if (
+        inFlight === null &&
+        !busy.current &&
+        !document.hidden &&
+        navigator.onLine
+      ) {
+        const ticket = ++generation.current;
+        inFlight = ticket;
+        const timeout = setTimeout(() => {
+          if (inFlight === ticket) inFlight = null;
+          if (alive && ticket === generation.current) clear();
+        }, 5000);
+        const started = performance.now();
         try {
           const result = await readExecution(initial.session_id, host);
-          if (alive) {
+          if (
+            alive &&
+            ticket === generation.current &&
+            !document.hidden &&
+            navigator.onLine
+          ) {
+            const deadline = inputReadDeadline(
+              started,
+              result.execution?.ttl_ms ?? 5000
+            );
+            if (performance.now() >= deadline) {
+              clear();
+              return;
+            }
             setStale(!result.execution);
-            if (result.execution) setState(result.execution);
+            if (result.execution) {
+              expires.current = deadline;
+              setState(result.execution);
+            } else clear();
           }
         } catch {
-          if (alive) setStale(true);
+          if (alive && ticket === generation.current) clear();
+        } finally {
+          clearTimeout(timeout);
+          if (inFlight === ticket) inFlight = null;
         }
       }
-      if (alive) timer = setTimeout(poll, 750);
     };
-    timer = setTimeout(poll, 750);
-    const offline = () => setStale(true);
-    window.addEventListener("offline", offline);
+    const timer = setInterval(() => void poll(), 750);
+    const expiry = setInterval(() => {
+      if (expires.current && performance.now() >= expires.current) clear();
+    }, 100);
+    const changed = () => {
+      clear();
+      if (!document.hidden && navigator.onLine) void poll();
+    };
+    window.addEventListener("offline", changed);
+    window.addEventListener("online", changed);
+    document.addEventListener("visibilitychange", changed);
     return () => {
       alive = false;
-      clearTimeout(timer);
-      window.removeEventListener("offline", offline);
+      fence.current++;
+      clearInterval(timer);
+      clearInterval(expiry);
+      window.removeEventListener("offline", changed);
+      window.removeEventListener("online", changed);
+      document.removeEventListener("visibilitychange", changed);
     };
   }, [initial.session_id, host]);
 
@@ -85,6 +139,7 @@ export function ExecutionPanel({
 
   const execute = async (request: Command) => {
     busy.current = true;
+    generation.current++;
     setPending(true);
     setProblem("");
     try {
@@ -98,9 +153,24 @@ export function ExecutionPanel({
       setProblem(result.error ?? "");
       setRetry(result.uncertain ? request : null);
       if (!result.error && !result.uncertain) setPreview(null);
+      const ticket = ++generation.current;
+      const started = performance.now();
       const fresh = await readExecution(state.session_id, host);
-      setStale(!fresh.execution);
-      if (fresh.execution) setState(fresh.execution);
+      const deadline = inputReadDeadline(
+        started,
+        fresh.execution?.ttl_ms ?? 5000
+      );
+      if (
+        ticket === generation.current &&
+        !document.hidden &&
+        performance.now() < deadline
+      ) {
+        setStale(!fresh.execution);
+        if (fresh.execution) {
+          expires.current = deadline;
+          setState(fresh.execution);
+        }
+      }
     } catch {
       setRetry(request);
       setStale(true);
@@ -212,6 +282,16 @@ export function ExecutionPanel({
       )}
       {host && !closed && (
         <>
+          {state.next?.input && (
+            <p role="status">
+              Fixed input readiness:{" "}
+              {stale || !state.inputs
+                ? "not verified."
+                : state.inputs.problems.length
+                  ? state.inputs.problems.join(" ")
+                  : "ready."}
+            </p>
+          )}
           {state.next?.scope === "group" && (
             <p role="status">
               Group readiness:{" "}
@@ -281,6 +361,11 @@ export function ExecutionPanel({
               {preview.command !== "end" && preview.activity && (
                 <>
                   <Task activity={preview.activity} />
+                  {preview.activity.input &&
+                    !stale &&
+                    preview.context === state.inputs?.token && (
+                      <InputPreviewDetails preview={state.inputs} />
+                    )}
                   <p>
                     Advancing closes ordinary editing of the previous activity.
                     Saved drafts remain available to their authorized audience.
@@ -349,6 +434,8 @@ export function ExecutionPanel({
                   previewStale ||
                   (preview.command !== "end" &&
                     preview.groupBlockers.length > 0) ||
+                  (preview.command === "next" &&
+                    !!state.inputs?.problems.length) ||
                   (preview.command === "start" && state.blockers.length > 0)
                 }
                 onClick={() => void execute(preview)}

@@ -1,5 +1,7 @@
 "use client";
 
+import { invalidateInputReads } from "../../lib/inputs";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   groupContextChanged,
@@ -25,7 +27,13 @@ async function requestGroups(
     body: JSON.stringify({ session, host, operation, request }),
     cache: "no-store",
   });
-  return response.json();
+  const result: GroupReply = await response.json();
+  if (
+    result.error === "not_allowed" ||
+    result.error === "input_access_required"
+  )
+    invalidateInputReads(session);
+  return result;
 }
 const notice =
   "Current groupmates can see one another’s display names. Group contributions follow the sharing notice in Group work. Individual answers remain private to their author and the authorized host. Assignment is not publication approval.";
@@ -39,6 +47,7 @@ export function GroupPanel({
   host?: boolean;
   enabled?: boolean;
 }) {
+  const accessSnapshot = useRef<GroupSnapshot | null>(null);
   const [snapshot, setSnapshot] = useState<GroupSnapshot | null>(null);
   const [base, setBase] = useState<GroupSnapshot | null>(null);
   const [plan, setPlan] = useState<GroupPlan | null>(null);
@@ -69,7 +78,15 @@ export function GroupPanel({
         setError(result.error);
         if (result.error === "not_allowed") denied.current = true;
       } else {
-        setSnapshot(result.snapshot ?? null);
+        const next = result.snapshot ?? null;
+        if (
+          accessSnapshot.current &&
+          next &&
+          groupContextChanged(accessSnapshot.current, next)
+        )
+          invalidateInputReads(session);
+        accessSnapshot.current = next;
+        setSnapshot(next);
         setError("");
       }
     } catch {
@@ -149,6 +166,7 @@ export function GroupPanel({
           setError(result.error);
         }
       } else if (result.receipt) {
+        if (result.receipt.changed) invalidateInputReads(session);
         setRetry(null);
         setPlan(null);
         setBase(null);

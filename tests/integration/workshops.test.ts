@@ -35,9 +35,9 @@ const agenda = (): Agenda => ({
   activities: [
     activity("a1"),
     activity("a2", {
-      title: "Compare in groups",
-      instructions: "Agree on the strongest opening.",
-      scope: "group",
+      title: "Refine your opening",
+      instructions: "Choose your strongest opening.",
+      scope: "individual",
       minutes: 20,
       outputs: [{ id: "f1", label: "Agreed opening", kind: "short" }],
       input: { activity: "a1", field: "f1" },

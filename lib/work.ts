@@ -82,6 +82,8 @@ export function workStatus(item: WorkItem) {
 
 export function workError(code: string) {
   switch (code) {
+    case "input_access_required":
+      return "Input access needs host confirmation. Your own text is still here.";
     case "not_allowed":
       return "Your access to this work is unavailable or has changed.";
     case "work_closed":
