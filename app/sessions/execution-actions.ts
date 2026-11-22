@@ -3,7 +3,11 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { credentialHash, guestCookieName } from "../../lib/guest";
-import { executionError, type Execution } from "../../lib/execution";
+import {
+  executionError,
+  executionResourceSummary,
+  type Execution,
+} from "../../lib/execution";
 import { isUuid } from "../../lib/ids";
 import { currentHost, guestSupabase } from "../../lib/supabase";
 import type { FormState } from "../form";
@@ -31,18 +35,23 @@ export async function prepareSession(
 
 export async function readExecution(
   session: string,
-  asHost: boolean
+  asHost: boolean,
+  resourceDetails = false
 ): Promise<{ execution?: Execution; error?: string }> {
   if (!isUuid(session)) return { error: executionError("not_allowed") };
   if (asHost) {
     const host = await currentHost();
     if (host.state !== "aal2") return { error: executionError("not_allowed") };
-    const { data, error } = await host.supabase.rpc("host_execution_v3", {
+    const { data, error } = await host.supabase.rpc("host_execution_v4", {
       p_session: session,
     });
     return error || !data
       ? { error: executionError(error?.message ?? "unavailable") }
-      : { execution: data };
+      : {
+          execution: resourceDetails
+            ? { ...data, resource_details: true }
+            : executionResourceSummary(data),
+        };
   }
   const credential = (await cookies()).get(guestCookieName(session))?.value;
   const supabase = guestSupabase();
@@ -74,7 +83,7 @@ export async function runExecution(
     return { error: "That command is invalid. Reload the session." };
   const host = await currentHost();
   if (host.state !== "aal2") return { error: executionError("not_allowed") };
-  const { data, error } = await host.supabase.rpc("execution_command_v3", {
+  const { data, error } = await host.supabase.rpc("execution_command_v4", {
     p_session: session,
     p_operation: operation,
     p_revision: revision,

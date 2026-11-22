@@ -6,6 +6,7 @@ import { scheduleVariance, type Execution } from "../../lib/execution";
 import { readExecution, runExecution } from "./execution-actions";
 import { InputPreviewDetails } from "./input-panel";
 import { inputReadDeadline } from "../../lib/inputs";
+import { ResourcePreviewDetails } from "../resources/details";
 
 function Task({ activity }: { activity: Activity }) {
   return (
@@ -48,6 +49,7 @@ export function ExecutionPanel({
   const [problem, setProblem] = useState("");
   const [stale, setStale] = useState(false);
   const [preview, setPreview] = useState<Command | null>(null);
+  const previewRef = useRef<Command | null>(null);
   const [retry, setRetry] = useState<Command | null>(null);
   const [pending, setPending] = useState(false);
   const busy = useRef(false);
@@ -65,7 +67,7 @@ export function ExecutionPanel({
       inFlight = null;
       expires.current = 0;
       setStale(true);
-      setState((s) => ({ ...s, inputs: null }));
+      setState((s) => ({ ...s, inputs: null, resources: null }));
     };
     const poll = async () => {
       if (
@@ -82,7 +84,12 @@ export function ExecutionPanel({
         }, 5000);
         const started = performance.now();
         try {
-          const result = await readExecution(initial.session_id, host);
+          const result = await readExecution(
+            initial.session_id,
+            host,
+            host &&
+              ["start", "next"].includes(previewRef.current?.command ?? "")
+          );
           if (
             alive &&
             ticket === generation.current &&
@@ -134,6 +141,7 @@ export function ExecutionPanel({
   }, [initial.session_id, host]);
 
   useEffect(() => {
+    previewRef.current = preview;
     if (preview) previewHeading.current?.focus();
   }, [preview]);
 
@@ -155,7 +163,11 @@ export function ExecutionPanel({
       if (!result.error && !result.uncertain) setPreview(null);
       const ticket = ++generation.current;
       const started = performance.now();
-      const fresh = await readExecution(state.session_id, host);
+      const fresh = await readExecution(
+        state.session_id,
+        host,
+        host && ["start", "next"].includes(previewRef.current?.command ?? "")
+      );
       const deadline = inputReadDeadline(
         started,
         fresh.execution?.ttl_ms ?? 5000
@@ -300,6 +312,14 @@ export function ExecutionPanel({
                 : "ready."}
             </p>
           )}
+          {!stale && !!state.resources?.items.length && (
+            <p role="status">
+              Resource readiness:{" "}
+              {state.resources.problems.length
+                ? state.resources.problems.join(" ")
+                : "ready."}
+            </p>
+          )}
           {state.blockers.length > 0 && (
             <ul>
               {state.blockers.map((item) => (
@@ -363,8 +383,25 @@ export function ExecutionPanel({
                   <Task activity={preview.activity} />
                   {preview.activity.input &&
                     !stale &&
-                    preview.context === state.inputs?.token && (
+                    preview.context === state.context &&
+                    state.inputs && (
                       <InputPreviewDetails preview={state.inputs} />
+                    )}
+                  {!stale &&
+                    preview.context === state.context &&
+                    state.resource_details &&
+                    state.resources?.items.map((resource) => (
+                      <ResourcePreviewDetails
+                        key={resource.allocation}
+                        preview={resource}
+                      />
+                    ))}
+                  {!!state.resources?.items.length &&
+                    !state.resource_details && (
+                      <p role="status">
+                        Loading the exact scheduled resource versions for this
+                        preview…
+                      </p>
                     )}
                   <p>
                     Advancing closes ordinary editing of the previous activity.
@@ -436,6 +473,10 @@ export function ExecutionPanel({
                     preview.groupBlockers.length > 0) ||
                   (preview.command === "next" &&
                     !!state.inputs?.problems.length) ||
+                  (["start", "next"].includes(preview.command) &&
+                    (!!state.resources?.problems.length ||
+                      (!!state.resources?.items.length &&
+                        !state.resource_details))) ||
                   (preview.command === "start" && state.blockers.length > 0)
                 }
                 onClick={() => void execute(preview)}

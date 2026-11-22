@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { afterEach, expect, test } from "vitest";
 import { inputFixture } from "../support/inputs";
-import { sql } from "../support/database";
+import { holdTransaction, sql } from "../support/database";
 import { client } from "../support/hosts";
 import { agenda, readyVersion } from "../support/execution";
 import { guestJoins, participantId } from "../support/sessions";
@@ -550,85 +550,97 @@ test("capability disable drains consumption; replay never resurrects a revoked g
   const x = await inputFixture();
   await x.submit();
   const preview = await x.preview();
-  const lock = await hold(
-    "lock table public.execution_commands in share mode",
-    4
+  const releaseLock = await holdTransaction(
+    "lock table public.execution_commands in share mode"
   );
-  const advance = x.execute("next", preview);
-  const running = Promise.resolve(advance);
-  await expect
-    .poll(
-      () =>
-        sql(
-          "select exists(select 1 from pg_locks where relation='public.execution_commands'::regclass and not granted);"
-        ),
-      { timeout: 3000 }
-    )
-    .toBe("t");
-  const off = spawn(
-    "docker",
-    [
-      "compose",
-      "exec",
-      "-T",
-      "db",
-      "psql",
-      "-U",
-      "postgres",
-      "-At",
-      "-c",
-      "update public.input_capability set enabled=false;",
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] }
-  );
-  const stopped = new Promise<number | null>((resolve) =>
-    off.on("exit", resolve)
-  );
-  expect(await lock.done).toBe(0);
-  expect((await running).error).toBeNull();
-  expect(await stopped).toBe(0);
-  const input = (await x.read()).data.items[0];
-  expect(input.source.ordinal).toBe(1);
-  expect(
-    (await x.send(x.request({ activity: "a2", content: { f1: "disabled" } })))
-      .error?.message
-  ).toBe("input_access_required");
-  expect(
-    (
-      await x.manage({
-        command: "revoke",
-        binding: input.binding,
-        reason: "Revoke while gated off",
-      })
-    ).error
-  ).toBeNull();
-  sql("update public.input_capability set enabled=true;");
-  const current = await x.host.rpc("read_inputs", {
-    p_session: x.session,
-    p_host: true,
-  });
-  const op = randomUUID();
-  const request = {
-    command: "resolve",
-    token: current.data.preview.token,
-    reason: "Fresh grant",
-  };
-  expect((await x.manage(request, op)).error).toBeNull();
-  expect(
-    (await x.manage({ ...request, reason: "Changed payload" }, op)).error
-      ?.message
-  ).toBe("operation_reused");
-  expect(
-    (
-      await x.manage({
-        command: "revoke",
-        binding: input.binding,
-        reason: "Revoked again",
-      })
-    ).error
-  ).toBeNull();
-  expect((await x.manage(request, op)).data).toEqual({ committed: true });
-  expect((await x.read()).data.items).toHaveLength(0);
+  try {
+    const advance = x.execute("next", preview);
+    const running = Promise.resolve(advance);
+    await expect
+      .poll(
+        () =>
+          sql(
+            "select exists(select 1 from pg_locks where relation='public.execution_commands'::regclass and not granted);"
+          ),
+        { timeout: 3000 }
+      )
+      .toBe("t");
+    const off = spawn(
+      "docker",
+      [
+        "compose",
+        "exec",
+        "-T",
+        "db",
+        "psql",
+        "-U",
+        "postgres",
+        "-At",
+        "-c",
+        "update public.input_capability set enabled=false;",
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
+    const stopped = new Promise<number | null>((resolve) =>
+      off.on("exit", resolve)
+    );
+    await expect
+      .poll(
+        () =>
+          sql(
+            "select exists(select 1 from pg_stat_activity where query like '%update public.input_capability%' and wait_event_type='Lock');"
+          ),
+        { timeout: 3000 }
+      )
+      .toBe("t");
+    await releaseLock();
+    expect((await running).error).toBeNull();
+    expect(await stopped).toBe(0);
+    const input = (await x.read()).data.items[0];
+    expect(input.source.ordinal).toBe(1);
+    expect(
+      (await x.send(x.request({ activity: "a2", content: { f1: "disabled" } })))
+        .error?.message
+    ).toBe("input_access_required");
+    expect(
+      (
+        await x.manage({
+          command: "revoke",
+          binding: input.binding,
+          reason: "Revoke while gated off",
+        })
+      ).error
+    ).toBeNull();
+    sql("update public.input_capability set enabled=true;");
+    const current = await x.host.rpc("read_inputs", {
+      p_session: x.session,
+      p_host: true,
+    });
+    const op = randomUUID();
+    const request = {
+      command: "resolve",
+      token: current.data.preview.token,
+      reason: "Fresh grant",
+    };
+    expect((await x.manage(request, op)).error).toBeNull();
+    expect(
+      (await x.manage({ ...request, reason: "Changed payload" }, op)).error
+        ?.message
+    ).toBe("operation_reused");
+    expect(
+      (
+        await x.manage({
+          command: "revoke",
+          binding: input.binding,
+          reason: "Revoked again",
+        })
+      ).error
+    ).toBeNull();
+    expect((await x.manage(request, op)).data).toEqual({ committed: true });
+    expect((await x.read()).data.items).toHaveLength(0);
+  } finally {
+    await releaseLock();
+  }
 }, 60_000);
 
 test("receipt insert/replay and preview reads recheck host expiry after their last blocking lock", async () => {

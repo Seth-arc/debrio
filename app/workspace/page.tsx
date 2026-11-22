@@ -85,6 +85,9 @@ export default async function Workspace() {
       <p>
         You own this workspace. Signed in as <strong>{host.user.email}</strong>.
       </p>
+      <p>
+        <Link href="/resources">Resource library</Link>
+      </p>
       <section aria-labelledby="workshops-heading">
         <h2 id="workshops-heading">Workshops</h2>
         {workshops === null ? (

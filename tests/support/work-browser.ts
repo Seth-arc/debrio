@@ -5,7 +5,12 @@ import { sql } from "./database";
 export async function prepareWork(
   page: Page,
   browser: Browser,
-  options: { group?: boolean; linked?: boolean } = {}
+  options: {
+    group?: boolean;
+    linked?: boolean;
+    start?: boolean;
+    resources?: boolean;
+  } = {}
 ) {
   if (options.group)
     sql("update public.group_work_capability set enabled=true;");
@@ -43,16 +48,23 @@ export async function prepareWork(
   sql(`insert into public.execution_capacity values(true,1000,clock_timestamp()+interval '1 hour') on conflict(singleton) do update set max_live=1000,valid_until=excluded.valid_until;
     insert into public.execution_eligibility select workspace_id,clock_timestamp()+interval '1 hour' from public.sessions where id='${session}' on conflict(workspace_id) do update set valid_until=excluded.valid_until;`);
   const context = await browser.newContext(
-    options.group || options.linked
+    options.group ||
+      options.linked ||
+      options.resources ||
+      process.env.RESOURCE_DEMO
       ? {
           viewport: page.viewportSize(),
           isMobile: (page.viewportSize()?.width ?? 1280) < 600,
-          ...(process.env.GROUP_DEMO || process.env.INPUT_DEMO
+          ...(process.env.GROUP_DEMO ||
+          process.env.INPUT_DEMO ||
+          process.env.RESOURCE_DEMO
             ? {
                 recordVideo: {
-                  dir: process.env.INPUT_DEMO
-                    ? ".artifacts/P2-03c/raw"
-                    : ".artifacts/P2-03b/raw",
+                  dir: process.env.RESOURCE_DEMO
+                    ? ".artifacts/P3-01a/raw"
+                    : process.env.INPUT_DEMO
+                      ? ".artifacts/P2-03c/raw"
+                      : ".artifacts/P2-03b/raw",
                   size: { width: 1280, height: 720 },
                 },
               }
@@ -104,6 +116,7 @@ export async function prepareWork(
       page.getByText("Group readiness: ready.", { exact: true })
     ).toBeVisible();
   }
+  if (options.start === false) return { session, guest, context };
   await page.getByRole("button", { name: "Preview start" }).click();
   await page.getByRole("button", { name: "Confirm start" }).click();
   await expect(

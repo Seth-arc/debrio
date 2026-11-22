@@ -234,3 +234,17 @@ legend {
 .instructions {
   white-space: pre-wrap;
 }
+
+.resource-panel {
+  overflow-wrap: anywhere;
+}
+
+.resource-panel select {
+  max-width: 100%;
+}
+
+.resource-panel input[type="checkbox"] {
+  width: auto;
+  margin-inline-end: 0.5rem;
+  accent-color: #28553e;
+}
