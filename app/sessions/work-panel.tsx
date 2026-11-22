@@ -558,7 +558,7 @@ export function WorkPanel({
       if (
         dirty() &&
         !window.confirm(
-          "Leave this page? Unsaved text or an unresolved work request may be lost."
+          "Leave this page? Unsaved edits or an unresolved request may be lost."
         )
       ) {
         restoring = true;
@@ -574,7 +574,7 @@ export function WorkPanel({
         anchor &&
         dirty() &&
         !window.confirm(
-          "Leave this page? Unsaved text or an unresolved work request may be lost."
+          "Leave this page? Unsaved edits or an unresolved request may be lost."
         )
       ) {
         event.preventDefault();

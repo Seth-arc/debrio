@@ -6,7 +6,8 @@ A ready version can prepare a lobby without starting a session. The host preview
 and confirms Start, can pause/resume the activity timer, preview/confirm the next
 activity, and explicitly end. Only individual activities without prior-answer
 inputs can run in this slice. Each admitted participant can save and submit private
-individual answers. Groups, linked answers, live overrides and media are not enabled.
+individual answers. Non-media group coordination is available alongside those
+tasks; group answers, linked answers, live overrides and media are not enabled.
 
 Execution is stored separately from admission. The selected ready version and
 four-hour deadline cannot change. Activity timer expiry only prompts. The database
@@ -82,6 +83,36 @@ Physical retention cleanup/deletion operations and hosted readiness remain separ
 release gates. Manual screen-reader proof for these controls is still unverified.
 
 Next.js application with host sign-in (email + password plus an authenticator app) and a personal workspace, backed by Supabase, plus an opt-in synthetic LiveKit media probe. Hosts can reset a forgotten password (email link plus authenticator) and change their password or email after a fresh authenticator code; email changes need confirmation from both addresses. Owners can create a session and share its join link: guests ask to join with just a name and wait in a lobby, and the host admits, denies or removes them, closes the lobby, replaces the link or ends the session. Guests need no account; their private credential stays in an HttpOnly cookie and the database stores only its hash. A guest who changes or loses a device asks again as a returning person (also while the lobby is closed, or within 90 days after the session ends); the host verifies them and restores their existing place, and the old device is told its place moved. Joining while signed in shows the account to the host as evidence but grants nothing. Owners can build reusable workshop agendas: objectives and ordered activities with instructions, individual or group scope, planned minutes, labelled answer fields and links to an earlier activity's answer. "Mark ready to run" freezes a validated version (the database enforces both the agenda's structure and its readiness); later edits start a new draft, and workshops can be duplicated. Individual, unlinked agendas support execution and durable work as described above. The operator's authenticator reset and media authorization are not implemented yet.
+
+### Non-media session groups
+
+The MFA host can create up to eight stable session groups, manually allocate
+admitted people or suggest balanced random groups, then inspect and confirm the
+exact plan. Unassigned people and empty groups are allowed. New admissions are
+Unassigned; verified device recovery preserves the original membership; removal
+clears membership atomically even through older admission clients. Live or paused
+membership changes require a reason. Ordinary activity advance carries grouping
+forward without changing individual work or the session deadline.
+
+Participants see only their own current group and its current members' display
+names. Assignment grants no peer answers, individual submission status, resources
+or media permissions. Group-scoped agendas still require separate group-work
+support and remain blocked, as do linked inputs. Group drafts/recorders, rehearsal,
+generic live overrides and media integration are separate work.
+
+`POST /api/groups` shares the bounded same-host request boundary with individual
+work. Confirmation checks the preview's roster, assignment and execution revisions
+under the session lock. A stale plan requires explicit reconciliation; a lost reply
+keeps its operation and exact mapping for retry. The mapping, immutable history and
+receipt commit together. End closes new changes; retained authorized reads and
+receipt replay expire at the original effective-end 90-day boundary.
+
+Apply `20261121190000_add_session_group_assignment.sql` and
+`20261121193000_recheck_group_roster_authority.sql` in order. Keep the additive
+tables and current-authority triggers during app rollback; the previous individual
+client can still save work, and a compatible client recovers group state later.
+No new service, dependency, offline cache or hosted capacity grant is introduced.
+Manual screen-reader verification remains unverified.
 
 ## Run locally
 

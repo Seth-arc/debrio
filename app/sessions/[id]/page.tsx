@@ -1,3 +1,4 @@
+import { GroupPanel } from "../group-panel";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import Link from "next/link";
@@ -188,6 +189,7 @@ export default async function HostSession({
       </p>
       {notice && <p role="alert">{notice}</p>}
       {execution && <ExecutionPanel initial={execution} host />}
+      {execution && <GroupPanel session={id} host />}
       {execution && <WorkPanel session={id} host />}
 
       {open && (

@@ -208,7 +208,7 @@ test("AC2/7/12: unsupported agenda refusal and expiry handler authorization", as
   test.setTimeout(150_000);
   await prepare(page, true);
   await expect(
-    page.getByRole("alert").filter({ hasText: "needs group assignment" })
+    page.getByRole("alert").filter({ hasText: "needs group-work support" })
   ).toBeVisible();
   await expect(page).toHaveURL(/\/workshops\//);
   expect((await request.post("/api/execution/expire")).status()).toBe(401);
