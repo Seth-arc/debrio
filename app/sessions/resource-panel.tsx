@@ -226,7 +226,7 @@ export function ResourcePanel({
   // An effect runs after these exact notices rendered, never from presence or a fetch alone.
   useEffect(() => {
     if (host || !snapshot || document.hidden || !navigator.onLine) return;
-    for (const item of snapshot.items) {
+    for (const item of snapshot.notices) {
       if (!item.notice || item.notice.dismissed || item.notice.received)
         continue;
       const key = `${snapshot.endpoint}:${item.allocation}:${item.notice.generation}`;
@@ -426,35 +426,43 @@ export function ResourcePanel({
           revocation remain available.
         </p>
       )}
+      {!host &&
+        snapshot?.notices.map(
+          (item) =>
+            !item.notice.dismissed && (
+              <div
+                key={`${item.allocation}:${item.notice.generation}`}
+                role="status"
+                data-resource-notice
+              >
+                <p>
+                  New resource available: {item.title} · version {item.ordinal}
+                </p>
+                <button
+                  onClick={() => {
+                    invalidate.current();
+                    setSelected(item.allocation);
+                  }}
+                >
+                  Open new resource
+                </button>
+                <button
+                  disabled={pending}
+                  onClick={() =>
+                    void mutate({
+                      command: "dismiss",
+                      allocation: item.allocation,
+                      generation: item.notice!.generation,
+                    })
+                  }
+                >
+                  Dismiss resource notice
+                </button>
+              </div>
+            )
+        )}
       {snapshot?.items.map((item) => (
         <div key={item.allocation}>
-          {!host && item.notice && !item.notice.dismissed && (
-            <div role="status" data-resource-notice>
-              <p>
-                New resource available: {item.title} · version {item.ordinal}
-              </p>
-              <button
-                onClick={() => {
-                  invalidate.current();
-                  setSelected(item.allocation);
-                }}
-              >
-                Open new resource
-              </button>
-              <button
-                disabled={pending}
-                onClick={() =>
-                  void mutate({
-                    command: "dismiss",
-                    allocation: item.allocation,
-                    generation: item.notice!.generation,
-                  })
-                }
-              >
-                Dismiss resource notice
-              </button>
-            </div>
-          )}
           <h3>
             {item.title} · version {item.ordinal}
           </h3>
@@ -838,6 +846,7 @@ function AllocationForm({
   const [detail, setDetail] = useState<ResourceLibrary["resource"]>(null);
   const [resource, setResource] = useState("");
   const [offset, setOffset] = useState(0);
+  const [versionOffset, setVersionOffset] = useState(0);
   const [problem, setProblem] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -867,13 +876,41 @@ function AllocationForm({
         if (alive && ticket === epoch) clear();
       }, 5000);
       try {
-        let reply = await requestResource({
-          workspace: snapshot.workspace,
-          host: true,
-          offset,
-          metadataOnly: true,
-          ...(resource ? { resource } : {}),
-        });
+        const [listReply, versionReply] = await Promise.all([
+          requestResource({
+            workspace: snapshot.workspace,
+            host: true,
+            offset,
+            metadataOnly: true,
+            ...(resource && offset === versionOffset ? { resource } : {}),
+          }),
+          resource && offset !== versionOffset
+            ? requestResource({
+                workspace: snapshot.workspace,
+                host: true,
+                resource,
+                offset: versionOffset,
+                metadataOnly: true,
+              })
+            : Promise.resolve(null),
+        ]);
+        let reply = versionReply
+          ? listReply.library && versionReply.library
+            ? {
+                ...listReply,
+                library: {
+                  ...listReply.library,
+                  authority: versionReply.library.authority,
+                  ttl_ms: Math.min(
+                    listReply.library.ttl_ms,
+                    versionReply.library.ttl_ms
+                  ),
+                },
+              }
+            : !listReply.library
+              ? listReply
+              : versionReply
+          : listReply;
         if (reply.error === "not_allowed" && resource)
           reply = await requestResource({
             workspace: snapshot.workspace,
@@ -907,7 +944,7 @@ function AllocationForm({
             workspace: snapshot.workspace,
             host: true,
             resource,
-            offset,
+            offset: versionOffset,
           });
           deadline = Math.min(
             deadline,
@@ -953,7 +990,7 @@ function AllocationForm({
       window.removeEventListener("offline", changed);
       window.removeEventListener("online", changed);
     };
-  }, [snapshot.workspace, resource, offset, plan.command]);
+  }, [snapshot.workspace, resource, offset, versionOffset, plan.command]);
   const versions = (detail?.versions ?? []).filter((version) =>
     library?.authority?.versions.includes(version.id)
   );
@@ -1013,7 +1050,10 @@ function AllocationForm({
             <select
               id="allocation-library-resource"
               value={resource}
-              onChange={(event) => setResource(event.target.value)}
+              onChange={(event) => {
+                setResource(event.target.value);
+                setVersionOffset(0);
+              }}
             >
               <option value="">Choose a resource</option>
               {library?.items.map((item) => (
@@ -1054,8 +1094,12 @@ function AllocationForm({
                 </option>
               ))}
             </select>
-            {resource && offset > 0 && (
-              <button onClick={() => setOffset(Math.max(0, offset - 20))}>
+            {resource && versionOffset > 0 && (
+              <button
+                onClick={() =>
+                  setVersionOffset(Math.max(0, versionOffset - 20))
+                }
+              >
                 Newer resource versions
               </button>
             )}
@@ -1063,7 +1107,7 @@ function AllocationForm({
               library?.authority?.next_version_offset !== undefined && (
                 <button
                   onClick={() =>
-                    setOffset(library.authority!.next_version_offset!)
+                    setVersionOffset(library.authority!.next_version_offset!)
                   }
                 >
                   Older resource versions

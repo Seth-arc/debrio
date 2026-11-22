@@ -126,6 +126,12 @@ export type ResourceItem = {
   };
   recipients?: ResourceRecipient[];
 };
+export type ResourceNotice = {
+  allocation: string;
+  title: string;
+  ordinal: number;
+  notice: NonNullable<ResourceItem["notice"]>;
+};
 export type ResourceSnapshot = {
   session: string;
   actor: string;
@@ -133,6 +139,7 @@ export type ResourceSnapshot = {
   ttl_ms: number;
   enabled: boolean;
   items: ResourceItem[];
+  notices: ResourceNotice[];
   next_offset: number | null;
   detail:
     (ResourceItem & { content: string; check: ResourceCheck | null }) | null;

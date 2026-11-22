@@ -18,7 +18,20 @@ test("synthetic link receipt: explicit host review, keyboard link-out and revoke
   sql("update public.resource_capability set enabled=true;");
   const x = await prepareWork(page, browser, { resources: true });
   const errors = collectErrors(page);
+  // A fast client can finish link review before the editor's first clock tick.
+  // Keep that boundary deterministic: text confirmation alone is not readiness.
+  await page.clock.install({ time: new Date() });
+  await page.clock.pauseAt(new Date(Date.now() + 1000));
   await page.goto("/resources");
+  let readyRequests = 0;
+  page.on("request", (request) => {
+    if (
+      request.url().endsWith("/api/resources") &&
+      request.method() === "POST" &&
+      request.postDataJSON().request?.command === "ready"
+    )
+      readyRequests++;
+  });
   await keyboardActivate(
     page.getByRole("button", { name: "New resource", exact: true })
   );
@@ -81,10 +94,26 @@ test("synthetic link receipt: explicit host review, keyboard link-out and revoke
     .focus();
   await page.keyboard.press("Enter");
   await expect(editor).toContainText("Host reviewed destination: Yes.");
-  await editor
-    .getByRole("button", { name: "Make version ready", exact: true })
-    .focus();
+  const ready = editor.getByRole("button", {
+    name: "Make version ready",
+    exact: true,
+  });
+  await expect(ready).toBeDisabled();
+  await ready.focus();
+  await expect(ready).not.toBeFocused();
   await page.keyboard.press("Enter");
+  expect(readyRequests).toBe(0);
+  await testInfo.attach("link-ready-before-first-clock-tick", {
+    body: JSON.stringify({
+      reviewed: true,
+      readyDisabled: true,
+      readyRequests,
+    }),
+    contentType: "application/json",
+  });
+  await page.clock.resume();
+  await keyboardActivate(ready);
+  await expect.poll(() => readyRequests).toBe(1);
   await expect(
     editor.getByRole("heading", {
       name: "Synthetic external reading · version 1",

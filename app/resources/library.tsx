@@ -34,6 +34,7 @@ export function ResourceLibraryPanel({ workspace }: { workspace: string }) {
   );
   const [problem, setProblem] = useState("");
   const [offset, setOffset] = useState(0);
+  const [versionOffset, setVersionOffset] = useState(0);
   const [loading, setLoading] = useState(false);
   const generation = useRef(0);
   const reads = useRef(0);
@@ -59,16 +60,41 @@ export function ResourceLibraryPanel({ workspace }: { workspace: string }) {
         if (alive && ticket === fence.current) clear();
       }, 5000);
       try {
-        const reply = await requestResource({
-          workspace,
-          host: true,
-          offset,
-          metadataOnly: true,
-          ...(selected?.revision && unavailableSource !== selected.id
-            ? { resource: selected.id }
-            : {}),
-        });
-        const deadline = inputReadDeadline(started, reply.library?.ttl_ms ?? 0);
+        const resource =
+          selected?.revision && unavailableSource !== selected.id
+            ? selected.id
+            : undefined;
+        const [reply, versionReply] = await Promise.all([
+          requestResource({
+            workspace,
+            host: true,
+            offset,
+            metadataOnly: true,
+            ...(resource && offset === versionOffset ? { resource } : {}),
+          }),
+          resource && offset !== versionOffset
+            ? requestResource({
+                workspace,
+                host: true,
+                resource,
+                offset: versionOffset,
+                metadataOnly: true,
+              })
+            : Promise.resolve(null),
+        ]);
+        const projection = versionReply
+          ? reply.library && versionReply.library
+            ? {
+                ...reply.library,
+                authority: versionReply.library.authority,
+                ttl_ms: Math.min(
+                  reply.library.ttl_ms,
+                  versionReply.library.ttl_ms
+                ),
+              }
+            : undefined
+          : reply.library;
+        const deadline = inputReadDeadline(started, projection?.ttl_ms ?? 0);
         if (
           !alive ||
           ticket !== fence.current ||
@@ -76,20 +102,21 @@ export function ResourceLibraryPanel({ workspace }: { workspace: string }) {
           !navigator.onLine
         )
           return;
-        if (!reply.library || performance.now() >= deadline) {
+        if (!projection || performance.now() >= deadline) {
           clear();
           if (
-            reply.error === "not_allowed" &&
+            (reply.error === "not_allowed" ||
+              versionReply?.error === "not_allowed") &&
             selected?.revision &&
             unavailableSource !== selected.id
           )
             setUnavailableSource(selected.id);
           return;
         }
-        setLibrary(reply.library);
+        setLibrary(projection);
         if (
           unavailableSource &&
-          reply.library.items.some((item) => item.id === unavailableSource)
+          projection.items.some((item) => item.id === unavailableSource)
         )
           setUnavailableSource(null);
         clearTimeout(expiry);
@@ -121,7 +148,14 @@ export function ResourceLibraryPanel({ workspace }: { workspace: string }) {
       window.removeEventListener("offline", changed);
       window.removeEventListener("online", changed);
     };
-  }, [workspace, offset, selected?.id, selected?.revision, unavailableSource]);
+  }, [
+    workspace,
+    offset,
+    versionOffset,
+    selected?.id,
+    selected?.revision,
+    unavailableSource,
+  ]);
   const handleChoose = async (resource: string) => {
     if (!leave()) return;
     const ticket = ++generation.current;
@@ -133,7 +167,7 @@ export function ResourceLibraryPanel({ workspace }: { workspace: string }) {
         workspace,
         host: true,
         resource,
-        offset,
+        offset: 0,
       });
       const deadline = inputReadDeadline(started, result.library?.ttl_ms ?? 0);
       if (
@@ -145,7 +179,12 @@ export function ResourceLibraryPanel({ workspace }: { workspace: string }) {
       )
         return;
       if (result.library?.resource) {
-        setLibrary(result.library);
+        setLibrary((previous) =>
+          previous
+            ? { ...previous, authority: result.library!.authority }
+            : null
+        );
+        setVersionOffset(0);
         setSelected(result.library.resource);
         setUnavailableSource(null);
         setEditorKey(++activeEditor.current);
@@ -221,6 +260,7 @@ export function ResourceLibraryPanel({ workspace }: { workspace: string }) {
               setLibrary(null);
               setEditorKey(++activeEditor.current);
               setUnavailableSource(null);
+              setVersionOffset(0);
               setSelected({
                 id: crypto.randomUUID(),
                 revision: 0,
@@ -247,8 +287,9 @@ export function ResourceLibraryPanel({ workspace }: { workspace: string }) {
             (!selected.revision || library.authority?.resource === selected.id)
           }
           liveResource={selected}
+          authorityGeneration={generation}
           authorizedVersions={library?.authority?.versions ?? []}
-          versionOffset={offset}
+          versionOffset={versionOffset}
           onVersionPage={(nextOffset) => {
             const started = performance.now();
             const ticket = ++generation.current;
@@ -281,7 +322,7 @@ export function ResourceLibraryPanel({ workspace }: { workspace: string }) {
                       }
                     : previous
                 );
-                setOffset(nextOffset);
+                setVersionOffset(nextOffset);
               })
               .catch(() =>
                 setProblem("Ready versions unavailable. Try the page again.")
@@ -317,6 +358,7 @@ function ResourceEditor({
   enabled,
   verified,
   liveResource,
+  authorityGeneration,
   authorizedVersions,
   versionOffset,
   onVersionPage,
@@ -327,6 +369,7 @@ function ResourceEditor({
   enabled: boolean;
   verified: boolean;
   liveResource: ResourceDraft | null;
+  authorityGeneration: { readonly current: number };
   authorizedVersions: string[];
   versionOffset: number;
   onVersionPage: (offset: number) => void;
@@ -335,6 +378,7 @@ function ResourceEditor({
   const [draft, setDraft] = useState(initial);
   const [saved, setSaved] = useState(initial);
   const [current, setCurrent] = useState<ResourceDraft | null>(null);
+  const [currentAuthority, setCurrentAuthority] = useState(-1);
   const [problem, setProblem] = useState("");
   const [status, setStatus] = useState(initial.revision ? "Saved" : "Unsaved");
   const [pending, setPending] = useState(false);
@@ -345,6 +389,7 @@ function ResourceEditor({
   const [reviewed, setReviewed] = useState<string | null>(null);
   const [now, setNow] = useState(0);
   const busy = useRef(false);
+  const detailReads = useRef(0);
   const title = useRef<HTMLHeadingElement>(null);
   const dirty =
     draft.title !== saved.title ||
@@ -353,18 +398,52 @@ function ResourceEditor({
     !saved.revision;
   const locked = pending || !!retry || !enabled || !verified;
   useEffect(() => {
+    const fence = detailReads;
     title.current?.focus();
     const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      fence.current++;
+    };
   }, []);
+  const acceptDetail = (read: {
+    resource: ResourceDraft;
+    authority: number;
+    ticket: number;
+    deadline: number;
+  }) => {
+    if (
+      read.ticket !== detailReads.current ||
+      read.authority !== authorityGeneration.current ||
+      performance.now() >= read.deadline ||
+      document.hidden ||
+      !navigator.onLine
+    )
+      throw Error("unavailable");
+    return read.resource;
+  };
   const refresh = async () => {
+    if (!verified || document.hidden || !navigator.onLine)
+      throw Error("unavailable");
+    const ticket = ++detailReads.current;
+    const authority = authorityGeneration.current;
+    const started = performance.now();
     const result = await requestResource({
       workspace,
       host: true,
       resource: saved.id,
+      offset: versionOffset,
     });
+    const deadline = inputReadDeadline(started, result.library?.ttl_ms ?? 0);
     if (!result.library?.resource) throw Error("unavailable");
-    return result.library.resource;
+    const read = {
+      resource: result.library.resource,
+      authority,
+      ticket,
+      deadline,
+    };
+    acceptDetail(read);
+    return read;
   };
   const execute = async (
     request: EditorRequest,
@@ -395,7 +474,7 @@ function ResourceEditor({
         );
         setProblem(resourceError(result.error));
         if (request.command === "check") {
-          const latest = await refresh();
+          const latest = acceptDetail(await refresh());
           setSaved(latest);
           setDraft(latest);
           setReviewed(null);
@@ -403,7 +482,7 @@ function ResourceEditor({
         }
       } else {
         setRetry(null);
-        const latest = await refresh();
+        const latest = acceptDetail(await refresh());
         setSaved(latest);
         setDraft(latest);
         setCurrent(null);
@@ -554,7 +633,11 @@ function ResourceEditor({
           disabled={pending}
           onClick={() => {
             void refresh()
-              .then(setCurrent)
+              .then((read) => {
+                const latest = acceptDetail(read);
+                setCurrentAuthority(read.authority);
+                setCurrent(latest);
+              })
               .catch(() =>
                 setProblem(
                   "Current saved resource unavailable. Your text remains here."
@@ -565,42 +648,44 @@ function ResourceEditor({
           Review current saved resource
         </button>
       )}
-      {current && verified && (
-        <div role="group" aria-label="Reconcile resource conflict">
-          <h3>Current saved revision {current.revision}</h3>
-          <p>{current.title}</p>
-          <p className="instructions">{current.content}</p>
-          <p>
-            Compare the saved text above with your editor. Keeping your text
-            allows an explicit save against this revision.
-          </p>
-          <button
-            onClick={() => {
-              setSaved(current);
-              setDraft((previous) => ({
-                ...previous,
-                revision: current.revision,
-              }));
-              setCurrent(null);
-              setStatus("Unsaved");
-              setProblem("");
-            }}
-          >
-            Keep my text against this revision
-          </button>
-          <button
-            onClick={() => {
-              setSaved(current);
-              setDraft(current);
-              setCurrent(null);
-              setStatus("Saved");
-              setProblem("");
-            }}
-          >
-            Use current saved text
-          </button>
-        </div>
-      )}
+      {current &&
+        verified &&
+        currentAuthority === authorityGeneration.current && (
+          <div role="group" aria-label="Reconcile resource conflict">
+            <h3>Current saved revision {current.revision}</h3>
+            <p>{current.title}</p>
+            <p className="instructions">{current.content}</p>
+            <p>
+              Compare the saved text above with your editor. Keeping your text
+              allows an explicit save against this revision.
+            </p>
+            <button
+              onClick={() => {
+                setSaved(current);
+                setDraft((previous) => ({
+                  ...previous,
+                  revision: current.revision,
+                }));
+                setCurrent(null);
+                setStatus("Unsaved");
+                setProblem("");
+              }}
+            >
+              Keep my text against this revision
+            </button>
+            <button
+              onClick={() => {
+                setSaved(current);
+                setDraft(current);
+                setCurrent(null);
+                setStatus("Saved");
+                setProblem("");
+              }}
+            >
+              Use current saved text
+            </button>
+          </div>
+        )}
       {verified && saved.kind === "link" && saved.revision > 0 && (
         <div>
           <h3>Validate the saved draft link</h3>

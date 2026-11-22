@@ -360,7 +360,7 @@ declare a public.resource_allocations; v public.resource_versions; rr public.res
  return result||jsonb_build_object('bases',public.resource_bases(a.id,p_actor),'generation',rr.generation,'notice',jsonb_build_object('id',n.id,'generation',n.generation,'dismissed',n.dismissed_at is not null,'received',coalesce(n.acked_endpoint=p_endpoint,false)));
 end $$;
 create function public.read_resources(p_session uuid,p_host boolean default false,p_credential_hash text default null,p_allocation uuid default null,p_offset integer default 0) returns jsonb language plpgsql security definer set search_path='' as $$
-declare actor uuid; endpoint text; s public.sessions; e public.session_execution; items jsonb; detail jsonb; result jsonb; ttl numeric:=5000; begin
+declare actor uuid; endpoint text; s public.sessions; e public.session_execution; items jsonb; notices jsonb:='[]'; detail jsonb; result jsonb; ttl numeric:=5000; begin
  if p_offset is null or p_offset<0 then raise exception 'invalid_resource'; end if;
  perform 1 from public.sessions where id=p_session for share;
  actor:=public.authorize_work(p_session,null,p_credential_hash,p_host);
@@ -368,13 +368,24 @@ declare actor uuid; endpoint text; s public.sessions; e public.session_execution
  endpoint:=case when p_host then auth.jwt()->>'session_id' else encode(extensions.digest(p_credential_hash,'sha256'),'hex') end;
  perform 1 from public.resources r join public.resource_versions v on v.resource_id=r.id join public.resource_allocations a on a.resource_version=v.id where a.session_id=p_session order by r.id for share of r,v;
  select coalesce(jsonb_agg(public.resource_item(a.id,actor,p_host,endpoint) order by a.id),'[]'::jsonb) into items from (select a.id from public.resource_allocations a join public.resource_versions v on v.id=a.resource_version join public.resources r on r.id=v.resource_id where a.session_id=p_session and (p_host or public.resource_access(a.id,actor)) order by a.id offset p_offset limit 20) a;
+ -- Release notices are independent of the paged tray. Resolve only the current
+ -- recipient generation through the same authority predicate; never copy bodies.
+ if not p_host then
+ select coalesce(jsonb_agg(q.notice order by q.created_at,q.id),'[]'::jsonb) into notices from (
+ select n.created_at,n.id,jsonb_build_object('allocation',a.id,'title',v.title,'ordinal',v.ordinal,'notice',jsonb_build_object('id',n.id,'generation',n.generation,'dismissed',false,'received',coalesce(n.acked_endpoint=endpoint,false))) notice
+ from public.resource_allocations a join public.resource_versions v on v.id=a.resource_version join public.resources r on r.id=v.resource_id
+ join public.resource_recipients rr on rr.allocation_id=a.id and rr.participant_id=actor
+ join public.resource_notices n on n.allocation_id=rr.allocation_id and n.participant_id=rr.participant_id and n.generation=rr.generation
+ where a.session_id=p_session and n.dismissed_at is null and public.resource_access(a.id,actor)
+ order by n.created_at,n.id limit 100) q;
+ end if;
  if p_allocation is not null then
  select public.resource_item(a.id,actor,p_host,endpoint)||jsonb_build_object('content',v.content,'check',public.resource_version_projection(v.id)->'check') into detail from public.resource_allocations a join public.resource_versions v on v.id=a.resource_version where a.id=p_allocation and a.session_id=p_session and (p_host or public.resource_access(a.id,actor));
  if detail is null then raise exception 'not_allowed' using errcode='42501'; end if; end if;
  perform public.authorize_work(p_session,null,p_credential_hash,p_host);
  if p_host then ttl:=least(ttl,((auth.jwt()->>'exp')::numeric-extract(epoch from clock_timestamp()))*1000,(select extract(epoch from not_after-clock_timestamp())*1000 from auth.sessions where id=(auth.jwt()->>'session_id')::uuid)); end if;
  if s.ended_at is not null then ttl:=least(ttl,extract(epoch from s.ended_at+interval '90 days'-clock_timestamp())*1000); elsif e.deadline is not null then ttl:=least(ttl,extract(epoch from e.deadline+interval '90 days'-clock_timestamp())*1000); end if;
- result:=jsonb_build_object('session',p_session,'actor',actor,'endpoint',endpoint,'ttl_ms',greatest(0,ttl),'enabled',(select enabled from public.resource_capability where singleton),'items',items,'detail',detail,'next_offset',case when (select count(*) from public.resource_allocations aa join public.resource_versions vv on vv.id=aa.resource_version join public.resources rr on rr.id=vv.resource_id where aa.session_id=p_session and (p_host or public.resource_access(aa.id,actor)))>p_offset+20 then p_offset+20 end);
+ result:=jsonb_build_object('session',p_session,'actor',actor,'endpoint',endpoint,'ttl_ms',greatest(0,ttl),'enabled',(select enabled from public.resource_capability where singleton),'items',items,'notices',notices,'detail',detail,'next_offset',case when (select count(*) from public.resource_allocations aa join public.resource_versions vv on vv.id=aa.resource_version join public.resources rr on rr.id=vv.resource_id where aa.session_id=p_session and (p_host or public.resource_access(aa.id,actor)))>p_offset+20 then p_offset+20 end);
  if p_host then result:=result||jsonb_build_object('workspace',s.workspace_id,'state',case when s.state='ended' then 'completed' else e.state end,'participants',(select coalesce(jsonb_agg(jsonb_build_object('id',id,'name',display_name) order by id),'[]'::jsonb) from public.session_participants where session_id=p_session and state='admitted'),'groups',(select coalesce(jsonb_agg(jsonb_build_object('id',id,'ordinal',ordinal) order by ordinal),'[]'::jsonb) from public.session_groups where session_id=p_session and not retired),'activities',(select content->'activities' from public.workshop_versions where id=e.version_id)); end if;
  return result;
 end $$;
