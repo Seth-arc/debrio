@@ -92,9 +92,20 @@ test("fixed inputs: exact preview, read-only delivery, revocation, delayed repli
   await hostInput
     .getByLabel("Reason for input access change")
     .fill("Synthetic access withdrawal");
+  // Start the revocation assertion after acknowledgement, not after the click.
+  await page.route("**/api/inputs", async (route) => {
+    if (route.request().postDataJSON().request?.command === "revoke")
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+    await route.continue();
+  });
   await hostInput
     .getByRole("button", { name: "Confirm input access change" })
     .click();
+  await expect(hostInput).toHaveAttribute("data-pending", "true");
+  await expect(
+    hostInput.getByText("Input access updated.", { exact: true })
+  ).toBeVisible({ timeout: 15_000 });
+  await page.unrouteAll({ behavior: "wait" });
   await expect(inputs.locator("[data-input-value]")).toHaveCount(0);
   await expect(inputs).toContainText("Input access needs host confirmation");
   await expect(answer).toHaveValue("My unsaved target work");
