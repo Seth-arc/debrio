@@ -50,6 +50,7 @@ test("a failed receipt rolls back every grant, allocation and notice; retry comm
       "drop trigger synthetic_review_receipt_failure on public.review_commands; drop function public.synthetic_review_receipt_failure();"
     );
   }
+  request.token = (await x.preview(id)).token;
   const outcomes = await Promise.all([
     x.send(request, undefined, operation),
     x.send(request, undefined, operation),

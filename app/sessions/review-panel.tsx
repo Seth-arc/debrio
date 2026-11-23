@@ -574,6 +574,11 @@ export function ReviewPanel({
           {snapshot.preview && previewId && (
             <div role="group" aria-label="Reviewer release preview">
               <h3>Confirm exact reviewer release</h3>
+              <p>Permission basis: {snapshot.preview.permission_basis}</p>
+              <p>
+                Target activity: {snapshot.preview.target_activity}. Current
+                activity: {snapshot.preview.current_activity}.
+              </p>
               {snapshot.preview.source && (
                 <ReviewProjectionDetails source={snapshot.preview.source} />
               )}

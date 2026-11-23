@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { reviewFixture } from "../support/reviews";
 import { client } from "../support/hosts";
@@ -79,6 +79,42 @@ describe("fixed submitted review permissions", { timeout: 30000 }, () => {
         })
       ).error
     ).not.toBeNull();
+  });
+
+  it("invalidates a preview after reviewer credential and admission changes", async () => {
+    const x = await reviewFixture(),
+      id = await x.approved();
+    const before = await x.preview(id);
+    const credential = randomBytes(32).toString("hex");
+    const hostToken = (await x.host.auth.getSession()).data.session!
+      .access_token;
+    const claims = Buffer.from(hostToken.split(".")[1], "base64url")
+      .toString()
+      .replaceAll("'", "''");
+    sql(
+      `begin; select set_config('request.jwt.claims','${claims}',true); update public.session_participants set credential_hash='${credential}' where id='${x.people[1].id}'; commit;`
+    );
+    const recovered = await x.preview(id);
+    expect(recovered.token).not.toBe(before.token);
+    expect(JSON.stringify(recovered)).not.toContain(credential);
+    sql(
+      `begin; select set_config('request.jwt.claims','${claims}',true); update public.session_participants set decided_at=decided_at+interval '1 second' where id='${x.people[1].id}'; commit;`
+    );
+    const readmitted = await x.preview(id);
+    expect(readmitted.token).not.toBe(recovered.token);
+    expect(
+      (await x.send({ command: "release", proposal: id, token: before.token }))
+        .error?.message
+    ).toBe("stale_review");
+    expect(
+      (
+        await x.send({
+          command: "release",
+          proposal: id,
+          token: readmitted.token,
+        })
+      ).error
+    ).toBeNull();
   });
 
   it("withdraws across old release retries, notices and generic resource mutations", async () => {

@@ -119,6 +119,9 @@ test("prospective group rule gates the editor and releases only its selected sub
       exact: true,
     })
     .click();
+  await expect(
+    host.getByRole("group", { name: "Reviewer release preview" })
+  ).toContainText("Prospective group sharing rule was disclosed");
   await host
     .getByRole("button", { name: "Confirm reviewer release", exact: true })
     .click();

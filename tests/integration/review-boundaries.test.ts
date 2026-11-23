@@ -27,20 +27,6 @@ test("an expired server preview token cannot confirm a release", async () => {
   ).toBeNull();
 }, 30000);
 
-async function queued(count: number) {
-  await expect
-    .poll(
-      () =>
-        Number(
-          sql(
-            "select count(*) from pg_stat_activity where wait_event_type='Lock' and (query like '%review_command%' or query like '%read_resources%' or query like '%decide_participant%');"
-          )
-        ),
-      { timeout: 10000 }
-    )
-    .toBeGreaterThanOrEqual(count);
-}
-
 test("withdrawal and release resolve both lock orders without restoring a grant", async () => {
   for (const first of ["withdraw", "release"]) {
     const x = await reviewFixture(),
@@ -61,10 +47,10 @@ test("withdrawal and release resolve both lock orders without restoring a grant"
         )
         .then((r) => r);
     const a = start(first);
-    await queued(1);
+    await unlock.waitForQueries("query like '%review_command%'", 1);
     const b = start(first === "withdraw" ? "release" : "withdraw");
     try {
-      await queued(2);
+      await unlock.waitForQueries("query like '%review_command%'", 2);
     } finally {
       await unlock();
     }
@@ -92,10 +78,16 @@ test("removal racing release denies the removed recipient in either serializatio
         : x.send({ command: "release", proposal: id, token })
       ).then((r) => r);
     const a = start(first);
-    await queued(1);
+    await unlock.waitForQueries(
+      "query like '%review_command%' or query like '%decide_participant%'",
+      1
+    );
     const b = start(first === "remove" ? "release" : "remove");
     try {
-      await queued(2);
+      await unlock.waitForQueries(
+        "query like '%review_command%' or query like '%decide_participant%'",
+        2
+      );
     } finally {
       await unlock();
     }

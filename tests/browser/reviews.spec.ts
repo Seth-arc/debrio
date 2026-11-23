@@ -251,6 +251,12 @@ test("individual approval, selected-field review, exact retry, withdrawal and of
     exact: true,
   });
   await expect(preview).toContainText("Synthetic Reviewer");
+  await expect(preview).toContainText(
+    "Individual author approved this exact item"
+  );
+  await expect(preview).toContainText(
+    "Target activity: a2. Current activity: a2."
+  );
   let cut = false;
   await page.route("**/api/reviews", async (route) => {
     const r = route.request().postDataJSON();

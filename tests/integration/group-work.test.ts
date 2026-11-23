@@ -619,27 +619,14 @@ describe("durable group Evidence", { timeout: 60000 }, () => {
     const pending = x.send(request).then((r) => r);
     let disabling: Promise<() => Promise<void>> | undefined;
     try {
-      await expect
-        .poll(
-          () =>
-            sql(
-              "select exists(select 1 from pg_locks where relation='public.work_commands'::regclass and not granted);"
-            ),
-          { timeout: 5000 }
-        )
-        .toBe("t");
+      await unlock.waitForQueries("query like '%group_work_command%'", 1);
       disabling = holdTransaction(
         "update public.group_work_capability set enabled=false"
       );
-      await expect
-        .poll(
-          () =>
-            sql(
-              "select exists(select 1 from pg_stat_activity where wait_event_type='Lock' and query like '%update public.group_work_capability%');"
-            ),
-          { timeout: 5000 }
-        )
-        .toBe("t");
+      await unlock.waitForQueries(
+        "query like '%update public.group_work_capability%'",
+        1
+      );
     } finally {
       await unlock();
       if (disabling) await (await disabling)();

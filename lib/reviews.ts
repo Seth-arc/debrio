@@ -51,6 +51,9 @@ export type ReviewSnapshot = {
     token: string;
     source: ReviewProjection | null;
     recipients: { id: string; name: string; state: string }[];
+    target_activity: string;
+    current_activity: string;
+    permission_basis: string;
     problems: string[];
     newer_version: boolean;
   } | null;
