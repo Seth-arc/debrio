@@ -42,6 +42,11 @@ test("group fixed input stays on consumed version; late members need exact grant
   await expect(adaInput.locator("[data-input-value]")).toHaveText(
     "Synthetic group source version one"
   );
+  // Input delivery and group work use independent snapshots. An editable
+  // source can still be the pre-advance window, not the reopened correction.
+  await expect(
+    source.getByRole("status").filter({ hasText: /^Closed for writing$/ })
+  ).toBeVisible();
   const hostSource = page.getByRole("region", { name: /^Group work Work 1 / });
   await hostSource
     .getByLabel("Reason for replacement, correction or incomplete submission")
