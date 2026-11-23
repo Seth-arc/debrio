@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, test } from "vitest";
 import { groupWorkFixture } from "../support/group-work";
-import { sql } from "../support/database";
+import { holdTransaction, sql } from "../support/database";
 import { client, ownerWithMfa } from "../support/hosts";
 import { SYNTHETIC_PASSWORD } from "../support/local-auth";
 import { command } from "../support/execution";
@@ -613,25 +613,40 @@ describe("durable group Evidence", { timeout: 60000 }, () => {
     const x = await groupWorkFixture();
     await x.save();
     const request = await x.request("submit");
-    const lock = await hold(
-      "lock table public.work_commands in share mode",
-      2.5
+    const unlock = await holdTransaction(
+      "lock table public.work_commands in share mode"
     );
     const pending = x.send(request).then((r) => r);
-    await expect
-      .poll(
-        () =>
-          sql(
-            "select exists(select 1 from pg_locks where relation='public.work_commands'::regclass and not granted);"
-          ),
-        { timeout: 5000 }
-      )
-      .toBe("t");
-    const disabledAt = sql(
-      "update public.group_work_capability set enabled=false; select clock_timestamp();"
-    );
+    let disabling: Promise<() => Promise<void>> | undefined;
+    try {
+      await expect
+        .poll(
+          () =>
+            sql(
+              "select exists(select 1 from pg_locks where relation='public.work_commands'::regclass and not granted);"
+            ),
+          { timeout: 5000 }
+        )
+        .toBe("t");
+      disabling = holdTransaction(
+        "update public.group_work_capability set enabled=false"
+      );
+      await expect
+        .poll(
+          () =>
+            sql(
+              "select exists(select 1 from pg_stat_activity where wait_event_type='Lock' and query like '%update public.group_work_capability%');"
+            ),
+          { timeout: 5000 }
+        )
+        .toBe("t");
+    } finally {
+      await unlock();
+      if (disabling) await (await disabling)();
+    }
+    if (!disabling) throw Error("Expected queued capability disable");
+    const disabledAt = sql("select clock_timestamp();");
     const result = await pending;
-    expect(await lock.done).toBe(0);
     expect(result.error).toBeNull();
     expect(Date.parse(result.data.confirmed_at)).toBeLessThanOrEqual(
       Date.parse(disabledAt)

@@ -5,14 +5,14 @@ import { client } from "./hosts";
 import { decide, guestJoins, participantId } from "./sessions";
 import type { WorkCommand } from "../../lib/work";
 
-export async function workFixture() {
+export async function workFixture(content = agenda()) {
   const x = await executionHost();
-  const content = agenda();
-  content.activities[0].outputs.push({
-    id: "f2",
-    label: "Short answer",
-    kind: "short",
-  });
+  if (!content.activities[0].outputs.some((f) => f.id === "f2"))
+    content.activities[0].outputs.push({
+      id: "f2",
+      label: "Short answer",
+      kind: "short",
+    });
   const version = await readyVersion(x.host, content);
   const prepared = await x.host.rpc("prepare_execution", {
     p_version: version.id,

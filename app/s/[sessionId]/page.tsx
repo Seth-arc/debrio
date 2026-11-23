@@ -1,5 +1,6 @@
 import { InputPanel } from "../../sessions/input-panel";
 import { ResourcePanel } from "../../sessions/resource-panel";
+import { ReviewPanel } from "../../sessions/review-panel";
 import { GroupWorkPanel } from "../../sessions/group-work-panel";
 import { GroupPanel } from "../../sessions/group-panel";
 import type { Metadata } from "next";
@@ -126,6 +127,13 @@ export default async function GuestSession({
       <h1>{heading}</h1>
       <p role="status">{text}</p>
       {execution && <ExecutionPanel initial={execution} />}
+      {credential && execution && place?.participant_state === "admitted" && (
+        <ReviewPanel
+          key={`reviews:${credentialHash(credentialHash(credential))}`}
+          session={sessionId}
+          endpoint={credentialHash(credentialHash(credential))}
+        />
+      )}
       {credential && execution && place?.participant_state === "admitted" && (
         <ResourcePanel
           key={`resources:${credentialHash(credentialHash(credential))}`}

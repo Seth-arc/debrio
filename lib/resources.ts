@@ -1,3 +1,5 @@
+import type { ReviewProjection } from "./reviews";
+
 export type ResourceKind = "text" | "link";
 export type ResourceSelector = {
   kind: "individual" | "group" | "shared";
@@ -109,7 +111,7 @@ export type ResourceItem = {
   revision: number;
   version: string;
   title: string;
-  kind: ResourceKind;
+  kind: ResourceKind | "review";
   ordinal: number;
   trigger: string;
   activity: string | null;
@@ -142,7 +144,12 @@ export type ResourceSnapshot = {
   notices: ResourceNotice[];
   next_offset: number | null;
   detail:
-    (ResourceItem & { content: string; check: ResourceCheck | null }) | null;
+    | (ResourceItem & {
+        content: string;
+        check: ResourceCheck | null;
+        review?: ReviewProjection | null;
+      })
+    | null;
   participants?: { id: string; name: string }[];
   groups?: { id: string; ordinal: number }[];
   activities?: { id: string; title: string }[];
