@@ -174,7 +174,7 @@ test("individual approval, selected-field review, exact retry, withdrawal and of
       await expect
         .poll(() =>
           sql(
-            "select count(*) from public.session_participants where display_name='Synthetic Temporary Reviewer' and state='removed';"
+            `select count(*) from public.session_participants where session_id='${session}' and display_name='Synthetic Temporary Reviewer' and state='removed';`
           )
         )
         .toBe("1");

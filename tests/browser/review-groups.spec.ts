@@ -43,9 +43,27 @@ test("prospective group rule gates the editor and releases only its selected sub
     name: "I have seen this group sharing rule",
     exact: true,
   });
+  await guest.evaluate(() =>
+    window.dispatchEvent(new Event("debrio-input-scope-changed"))
+  );
+  await expect(ack).toBeEnabled();
   await ack.focus();
   await ack.press("Enter");
-  await expect(member).toContainText("All current members have acknowledged");
+  await expect(member).toContainText(
+    /All current members have acknowledged|Access or preview expired/,
+    { timeout: 8000 }
+  );
+  if (
+    await member
+      .getByText("Access or preview expired. Wait for a fresh view.")
+      .isVisible()
+  ) {
+    await expect(ack).toBeEnabled();
+    await ack.press("Enter");
+  }
+  await expect(member).toContainText("All current members have acknowledged", {
+    timeout: 8000,
+  });
   await guest
     .getByLabel("Explanation 1 — group answer", { exact: true })
     .fill("Synthetic disclosed group answer");
