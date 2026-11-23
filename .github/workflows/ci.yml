@@ -12,7 +12,8 @@ jobs:
   checks:
     name: Application checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # Database, browser and media suites share a fresh stack and run sequentially.
+    timeout-minutes: 30
     env:
       NEXT_TELEMETRY_DISABLED: "1"
     steps:

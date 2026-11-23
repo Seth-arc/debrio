@@ -1,4 +1,5 @@
 import { InputPanel } from "../input-panel";
+import { ResourcePanel } from "../resource-panel";
 import { GroupWorkPanel } from "../group-work-panel";
 import { GroupPanel } from "../group-panel";
 import type { Metadata } from "next";
@@ -10,7 +11,10 @@ import { currentHost } from "../../../lib/supabase";
 import { AutoRefresh } from "../../auto-refresh";
 import { HostProblem } from "../../host-problem";
 import { updateSession } from "../actions";
-import type { Execution } from "../../../lib/execution";
+import {
+  executionResourceSummary,
+  type Execution,
+} from "../../../lib/execution";
 import { ExecutionPanel } from "../execution-panel";
 import { WorkPanel } from "../work-panel";
 import { CommandButton } from "../command-button";
@@ -136,7 +140,7 @@ export default async function HostSession({
       .eq("id", id)
       .maybeSingle(),
     host.supabase.rpc("session_people", { p_session: id }),
-    host.supabase.rpc("host_execution_v2", { p_session: id }),
+    host.supabase.rpc("host_execution_v4", { p_session: id }),
   ]);
   if (
     sessionResult.error ||
@@ -161,7 +165,9 @@ export default async function HostSession({
   )?.[1];
   const request = await headers();
   const link = `${request.get("x-forwarded-proto") ?? "http"}://${request.get("host")}/join/${session.join_key}`;
-  const execution = executionResult.data as Execution | null;
+  const execution = executionResult.data
+    ? executionResourceSummary(executionResult.data as Execution)
+    : null;
   const open = session.state === "open" && execution?.state !== "completed";
   // The database decides whether returning requests are still possible.
   const { data: joinable } = await host.supabase.rpc("session_for_join", {
@@ -193,6 +199,7 @@ export default async function HostSession({
       {execution && <ExecutionPanel initial={execution} host />}
       {execution && <GroupPanel session={id} host />}
       {execution && <InputPanel session={id} host />}
+      {execution && <ResourcePanel session={id} host />}
       {execution && <WorkPanel session={id} host />}
       {execution && <GroupWorkPanel session={id} host />}
 

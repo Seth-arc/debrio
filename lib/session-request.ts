@@ -10,11 +10,12 @@ type Envelope = {
   request?: Record<string, unknown>;
 };
 
-export async function readSessionRequest(
+export async function readBoundedRequest(
   request: Request,
   invalid = "invalid_request"
 ): Promise<
-  { input: Envelope; response?: never } | { response: Response; input?: never }
+  | { input: Record<string, unknown>; response?: never }
+  | { response: Response; input?: never }
 > {
   const reply = (body: object, status = 200) => ({
     response: sessionReply(body, status),
@@ -56,10 +57,25 @@ export async function readSessionRequest(
   } finally {
     reader.releaseLock();
   }
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    return reply({ error: invalid }, 400);
+  return { input };
+}
+
+export async function readSessionRequest(
+  request: Request,
+  invalid = "invalid_request"
+): Promise<
+  { input: Envelope; response?: never } | { response: Response; input?: never }
+> {
+  const parsed = await readBoundedRequest(request, invalid);
+  if (parsed.response) return parsed;
+  const { input } = parsed;
+  const reply = (body: object, status: number) => ({
+    response: sessionReply(body, status),
+  });
   if (
-    !input ||
-    typeof input !== "object" ||
-    Array.isArray(input) ||
+    typeof input.session !== "string" ||
     !isUuid(input.session) ||
     typeof input.host !== "boolean" ||
     Object.keys(input).some(
@@ -75,5 +91,5 @@ export async function readSessionRequest(
       Array.isArray(input.request))
   )
     return reply({ error: invalid }, 400);
-  return { input };
+  return { input: input as Envelope };
 }

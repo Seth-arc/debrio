@@ -1,4 +1,5 @@
 import { InputPanel } from "../../sessions/input-panel";
+import { ResourcePanel } from "../../sessions/resource-panel";
 import { GroupWorkPanel } from "../../sessions/group-work-panel";
 import { GroupPanel } from "../../sessions/group-panel";
 import type { Metadata } from "next";
@@ -75,9 +76,7 @@ export default async function GuestSession({
       | null
   )?.[0];
   const executionResult =
-    credential &&
-    place?.participant_state === "admitted" &&
-    place.session_state === "open"
+    credential && place?.participant_state === "admitted"
       ? await guest.rpc("guest_execution", {
           p_session: sessionId,
           p_credential_hash: credentialHash(credential),
@@ -127,6 +126,13 @@ export default async function GuestSession({
       <h1>{heading}</h1>
       <p role="status">{text}</p>
       {execution && <ExecutionPanel initial={execution} />}
+      {credential && execution && place?.participant_state === "admitted" && (
+        <ResourcePanel
+          key={`resources:${credentialHash(credentialHash(credential))}`}
+          session={sessionId}
+          endpoint={credentialHash(credentialHash(credential))}
+        />
+      )}
       {credential && place?.participant_state === "admitted" && (
         <InputPanel
           key={credentialHash(credentialHash(credential))}

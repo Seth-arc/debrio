@@ -1,6 +1,7 @@
 import type { InputPreview } from "./inputs";
 import type { Activity } from "./agenda";
 import type { GroupCoordination } from "./group-work";
+import type { ResourcePreview } from "./resources";
 
 export type Execution = {
   session_id: string;
@@ -22,17 +23,50 @@ export type Execution = {
   blockers: string[];
   context?: string;
   inputs?: InputPreview | null;
+  resources?: { items: ResourcePreview[]; problems: string[] } | null;
+  resource_details?: boolean;
   ttl_ms?: number;
   coordination?: GroupCoordination;
   group_blockers?: string[];
   unfinished?: { group: string; ordinal: number }[];
 };
 
+// Initial HTML and background summaries do not carry unopened resource bodies or destinations.
+export function executionResourceSummary(state: Execution): Execution {
+  return {
+    ...state,
+    resource_details: false,
+    resources: state.resources
+      ? {
+          ...state.resources,
+          items: state.resources.items.map((item) => ({
+            ...item,
+            version: item.version
+              ? {
+                  ...item.version,
+                  content: "",
+                  check: item.version.check
+                    ? { ...item.version.check, final_url: null }
+                    : null,
+                }
+              : null,
+          })),
+        }
+      : state.resources,
+  };
+}
+
 export const executionError = (message: string, details?: string) => {
   if (["unsupported_agenda", "start_blocked"].includes(message) && details)
     return details;
   return (
     Object.entries({
+      resource_prerequisite:
+        "Resolve the scheduled resource problems before advancing.",
+      stale_resource:
+        "A resource preview changed. Preview the activity again before confirming.",
+      resource_unavailable:
+        "Resource changes are temporarily unavailable. Scheduled resources cannot be skipped.",
       input_unavailable: "Fixed inputs are temporarily unavailable.",
       input_prerequisite:
         "A required submitted source field is missing or needs explicit partial acceptance.",
