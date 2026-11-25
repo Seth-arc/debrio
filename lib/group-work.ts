@@ -133,6 +133,8 @@ export type GroupWorkReply = {
 };
 export function groupWorkError(code: string) {
   switch (code) {
+    case "review_disclosure_required":
+      return "Wait for every current member to acknowledge the group sharing rule. Open the review controls in the current client; your local text stays here.";
     case "input_access_required":
       return "Input access needs host confirmation. Your own text is still here.";
     case "not_allowed":

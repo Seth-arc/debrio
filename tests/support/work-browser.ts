@@ -57,14 +57,17 @@ export async function prepareWork(
           isMobile: (page.viewportSize()?.width ?? 1280) < 600,
           ...(process.env.GROUP_DEMO ||
           process.env.INPUT_DEMO ||
-          process.env.RESOURCE_DEMO
+          process.env.RESOURCE_DEMO ||
+          process.env.REVIEW_DEMO
             ? {
                 recordVideo: {
-                  dir: process.env.RESOURCE_DEMO
-                    ? ".artifacts/P3-01a/raw"
-                    : process.env.INPUT_DEMO
-                      ? ".artifacts/P2-03c/raw"
-                      : ".artifacts/P2-03b/raw",
+                  dir: process.env.REVIEW_DEMO
+                    ? ".artifacts/P3-01b/raw"
+                    : process.env.RESOURCE_DEMO
+                      ? ".artifacts/P3-01a/raw"
+                      : process.env.INPUT_DEMO
+                        ? ".artifacts/P2-03c/raw"
+                        : ".artifacts/P2-03b/raw",
                   size: { width: 1280, height: 720 },
                 },
               }

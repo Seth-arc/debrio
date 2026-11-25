@@ -80,6 +80,7 @@ export async function POST(request: Request) {
             });
     if (error) {
       const known = [
+        "review_disclosure_required",
         "not_allowed",
         "input_access_required",
         "group_work_closed",

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ReviewProjectionDetails } from "./review-projection";
 import { useEffect, useRef, useState } from "react";
 import { INPUT_SCOPE_CHANGED, inputReadDeadline } from "../../lib/inputs";
 import {
@@ -489,111 +490,118 @@ export function ResourcePanel({
           >
             View resource
           </button>
-          {host && !proposal && !confirmation && !retry && !item.revoked_at && (
-            <div className="actions">
-              {!item.released_at && (
-                <>
-                  <button
-                    disabled={locked || !mayExpand}
-                    onClick={() => begin(item)}
-                  >
-                    Edit resource schedule
-                  </button>
-                  <button
-                    disabled={
-                      locked ||
-                      !mayExpand ||
-                      item.trigger !== "manual" ||
-                      snapshot.state === "ready"
-                    }
-                    onClick={() => void makePreview(plan(item, "release"))}
-                  >
-                    Preview resource release
-                  </button>
-                  <button
-                    disabled={locked}
-                    onClick={() =>
-                      setConfirmation({
-                        command: "cancel",
-                        allocation: item.allocation,
-                        revision: item.revision,
-                      })
-                    }
-                  >
-                    Cancel resource schedule
-                  </button>
-                </>
-              )}
-              {item.released_at && (
-                <>
-                  <button
-                    disabled={
-                      locked || !mayExpand || snapshot.state === "ready"
-                    }
-                    onClick={() => begin(item, "audience")}
-                  >
-                    Update resource audience
-                  </button>
-                  <button
-                    disabled={locked}
-                    onClick={() =>
-                      setConfirmation({
-                        command: "revoke",
-                        allocation: item.allocation,
-                        participant: null,
-                        reason: "",
-                      })
-                    }
-                  >
-                    Revoke resource for everyone
-                  </button>
-                </>
-              )}
-            </div>
-          )}
+          {host &&
+            item.kind !== "review" &&
+            !proposal &&
+            !confirmation &&
+            !retry &&
+            !item.revoked_at && (
+              <div className="actions">
+                {!item.released_at && (
+                  <>
+                    <button
+                      disabled={locked || !mayExpand}
+                      onClick={() => begin(item)}
+                    >
+                      Edit resource schedule
+                    </button>
+                    <button
+                      disabled={
+                        locked ||
+                        !mayExpand ||
+                        item.trigger !== "manual" ||
+                        snapshot.state === "ready"
+                      }
+                      onClick={() => void makePreview(plan(item, "release"))}
+                    >
+                      Preview resource release
+                    </button>
+                    <button
+                      disabled={locked}
+                      onClick={() =>
+                        setConfirmation({
+                          command: "cancel",
+                          allocation: item.allocation,
+                          revision: item.revision,
+                        })
+                      }
+                    >
+                      Cancel resource schedule
+                    </button>
+                  </>
+                )}
+                {item.released_at && (
+                  <>
+                    <button
+                      disabled={
+                        locked || !mayExpand || snapshot.state === "ready"
+                      }
+                      onClick={() => begin(item, "audience")}
+                    >
+                      Update resource audience
+                    </button>
+                    <button
+                      disabled={locked}
+                      onClick={() =>
+                        setConfirmation({
+                          command: "revoke",
+                          allocation: item.allocation,
+                          participant: null,
+                          reason: "",
+                        })
+                      }
+                    >
+                      Revoke resource for everyone
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           {host && item.recipients && (
             <ul>
               {item.recipients.map((recipient) => (
                 <li key={recipient.participant}>
                   {recipient.name} · {recipient.participant} ·{" "}
                   {recipient.delivery}
-                  {item.released_at && !item.revoked_at && (
-                    <div className="actions">
-                      <button
-                        disabled={locked || !!proposal || !!confirmation}
-                        onClick={() =>
-                          setConfirmation({
-                            command: "revoke",
-                            allocation: item.allocation,
-                            participant: recipient.participant,
-                            reason: "",
-                          })
-                        }
-                      >
-                        Revoke resource for {recipient.name} ·{" "}
-                        {recipient.participant}
-                      </button>
-                      <button
-                        disabled={
-                          locked ||
-                          !!proposal ||
-                          !!confirmation ||
-                          recipient.delivery !==
-                            "Available; receipt unconfirmed"
-                        }
-                        onClick={() =>
-                          void mutate({
-                            command: "retry",
-                            allocation: item.allocation,
-                            participants: [recipient.participant],
-                          })
-                        }
-                      >
-                        Retry delivery to {recipient.name} ·{" "}
-                        {recipient.participant}
-                      </button>
-                    </div>
-                  )}
+                  {item.kind !== "review" &&
+                    item.released_at &&
+                    !item.revoked_at && (
+                      <div className="actions">
+                        <button
+                          disabled={locked || !!proposal || !!confirmation}
+                          onClick={() =>
+                            setConfirmation({
+                              command: "revoke",
+                              allocation: item.allocation,
+                              participant: recipient.participant,
+                              reason: "",
+                            })
+                          }
+                        >
+                          Revoke resource for {recipient.name} ·{" "}
+                          {recipient.participant}
+                        </button>
+                        <button
+                          disabled={
+                            locked ||
+                            !!proposal ||
+                            !!confirmation ||
+                            recipient.delivery !==
+                              "Available; receipt unconfirmed"
+                          }
+                          onClick={() =>
+                            void mutate({
+                              command: "retry",
+                              allocation: item.allocation,
+                              participants: [recipient.participant],
+                            })
+                          }
+                        >
+                          Retry delivery to {recipient.name} ·{" "}
+                          {recipient.participant}
+                        </button>
+                      </div>
+                    )}
                 </li>
               ))}
             </ul>
@@ -612,7 +620,14 @@ export function ResourcePanel({
           <h3>
             {snapshot.detail.title} · version {snapshot.detail.ordinal}
           </h3>
-          {snapshot.detail.kind === "text" ? (
+          {snapshot.detail.kind === "review" ? (
+            <>
+              <h4>Submitted work for review</h4>
+              {snapshot.detail.review && (
+                <ReviewProjectionDetails source={snapshot.detail.review} />
+              )}
+            </>
+          ) : snapshot.detail.kind === "text" ? (
             <p className="instructions" data-resource-content>
               {snapshot.detail.content}
             </p>
