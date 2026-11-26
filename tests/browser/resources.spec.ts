@@ -521,7 +521,12 @@ test("an expired host resource preview retains the proposal and requires a fresh
     ) {
       heldFirstReleasePreview = true;
       firstPreviewRequest = route.request();
+      const stale = await route.fetch();
+      const staleBody = await stale.json();
+      staleBody.preview.problems.push("Synthetic stale preview response");
       await firstPreviewHeld;
+      await route.fulfill({ response: stale, json: staleBody });
+      return;
     }
     await route.continue();
   });
@@ -554,9 +559,13 @@ test("an expired host resource preview retains the proposal and requires a fresh
     releaseFirstPreview();
   }
   await firstReply;
+  await page.waitForTimeout(250);
   await expect(
     panel.getByRole("group", { name: "Confirm resource allocation" })
   ).toContainText("Synthetic Ada");
+  await expect(
+    panel.getByRole("group", { name: "Confirm resource allocation" })
+  ).not.toContainText("Synthetic stale preview response");
 });
 
 test("resources: scheduled and manual delivery, scoped notices, revocation, held replies and reconnect preserve work", async ({
