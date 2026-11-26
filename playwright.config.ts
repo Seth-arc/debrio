@@ -3,6 +3,9 @@ import { localSupabaseEnv } from "./scripts/local-supabase";
 
 export default defineConfig({
   testDir: "./tests/browser",
+  testIgnore: process.env.FILE_RESOURCE_BROWSER
+    ? []
+    : ["file-resources.spec.ts"],
   forbidOnly: !!process.env.CI,
   retries: 0,
   reporter: "list",

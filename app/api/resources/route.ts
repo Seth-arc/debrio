@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { credentialHash, guestCookieName } from "../../../lib/guest";
+import { verifyFileAvailability } from "../../../lib/file-availability";
 import { isUuid } from "../../../lib/ids";
 import {
   normalizeResourceUrl,
@@ -122,6 +123,40 @@ export async function POST(request: Request) {
       } catch {
         return reply({ error: "invalid_resource" }, 400);
       }
+    }
+    if (
+      x.host &&
+      x.session &&
+      r &&
+      ["preview", "schedule", "release", "audience"].includes(
+        r.command as string
+      )
+    ) {
+      const candidate =
+        r.command === "preview"
+          ? (r.proposal as Record<string, unknown> | undefined)?.version
+          : r.version;
+      if (!isUuid(candidate)) return reply({ error: "invalid_resource" }, 400);
+      const scoped = await db.rpc("file_version_in_session", {
+        p_session: x.session,
+        p_version: candidate,
+      });
+      const replay =
+        scoped.data && r.command !== "preview"
+          ? await db.rpc("file_operation_replay_candidate", {
+              p_session: x.session,
+              p_operation: x.operation,
+              p_execution: false,
+            })
+          : null;
+      if (scoped.error) return failure(scoped.error, mutation);
+      if (replay?.error) return failure(replay.error, mutation);
+      if (
+        scoped.data &&
+        !replay?.data &&
+        !(await verifyFileAvailability(candidate))
+      )
+        return reply({ error: "resource_unavailable" });
     }
     let result;
     if (x.workspace) {

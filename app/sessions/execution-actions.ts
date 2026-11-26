@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { credentialHash, guestCookieName } from "../../lib/guest";
+import { verifyDueFiles } from "../../lib/file-availability";
 import {
   executionError,
   executionResourceSummary,
@@ -83,6 +84,19 @@ export async function runExecution(
     return { error: "That command is invalid. Reload the session." };
   const host = await currentHost();
   if (host.state !== "aal2") return { error: executionError("not_allowed") };
+  if (["start", "next"].includes(command)) {
+    const replay = await host.supabase.rpc("file_operation_replay_candidate", {
+      p_session: session,
+      p_operation: operation,
+      p_execution: true,
+    });
+    if (replay.error)
+      return {
+        error: executionError(replay.error.message, replay.error.details),
+      };
+    if (!replay.data && !(await verifyDueFiles(host.supabase, session)))
+      return { error: executionError("resource_unavailable") };
+  }
   const { data, error } = await host.supabase.rpc("execution_command_v4", {
     p_session: session,
     p_operation: operation,

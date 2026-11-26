@@ -15,6 +15,7 @@ import {
 
 test("missing or malformed execution acknowledgement retains the exact operation for retry", async () => {
   for (const data of [null, {}, { revision: "2", state: "live" }]) {
+    rpc.mockResolvedValueOnce({ data: [], error: null });
     rpc.mockResolvedValueOnce({ data, error: null });
     const operation = randomUUID();
     expect(
@@ -29,6 +30,7 @@ test("missing or malformed execution acknowledgement retains the exact operation
 
 test("a validated transition or deadline receipt completes the command", async () => {
   for (const data of [{ revision: 3, state: "live" }, { ended: true }]) {
+    rpc.mockResolvedValueOnce({ data: [], error: null });
     rpc.mockResolvedValueOnce({ data, error: null });
     expect(
       await runExecution(randomUUID(), randomUUID(), 2, "next", "a".repeat(64))

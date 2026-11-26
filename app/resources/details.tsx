@@ -59,11 +59,18 @@ export function ResourceVersionDetails({
       <p>
         {version.kind === "text"
           ? "Plain text · Read-only"
-          : "External HTTPS link"}
+          : version.kind === "file"
+            ? "Protected file · Read-only"
+            : "External HTTPS link"}
       </p>
       {version.kind === "text" ? (
         <p className="instructions" data-resource-content>
           {version.content}
+        </p>
+      ) : version.kind === "file" ? (
+        <p>
+          {version.file?.filename ?? "File unavailable"} · {version.file?.mime}{" "}
+          · {version.file?.size} bytes · {version.file?.status}
         </p>
       ) : (
         <LinkCheckDetails content={version.content} check={version.check} />

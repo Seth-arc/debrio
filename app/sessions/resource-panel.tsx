@@ -631,6 +631,27 @@ export function ResourcePanel({
             <p className="instructions" data-resource-content>
               {snapshot.detail.content}
             </p>
+          ) : snapshot.detail.kind === "file" ? (
+            <>
+              <p>
+                {snapshot.detail.file?.filename ?? "File unavailable"} ·{" "}
+                {snapshot.detail.file?.mime} · {snapshot.detail.file?.size}{" "}
+                bytes
+              </p>
+              {snapshot.detail.file?.status === "ready" ? (
+                <a
+                  href={`/api/resources/file/download?session=${encodeURIComponent(session)}&allocation=${encodeURIComponent(snapshot.detail.allocation)}&host=${host}`}
+                >
+                  Download protected file
+                </a>
+              ) : (
+                <p role="status">This file is unavailable for download.</p>
+              )}
+              <p>
+                Access is checked for each download. A copy already saved to a
+                device cannot be recalled.
+              </p>
+            </>
           ) : (
             <>
               {host ? (
@@ -1006,8 +1027,10 @@ function AllocationForm({
       window.removeEventListener("online", changed);
     };
   }, [snapshot.workspace, resource, offset, versionOffset, plan.command]);
-  const versions = (detail?.versions ?? []).filter((version) =>
-    library?.authority?.versions.includes(version.id)
+  const versions = (detail?.versions ?? []).filter(
+    (version) =>
+      library?.authority?.versions.includes(version.id) &&
+      (version.kind !== "file" || version.file?.status === "ready")
   );
   const currentAllocation = snapshot.items.find(
     (item) => item.allocation === plan.allocation

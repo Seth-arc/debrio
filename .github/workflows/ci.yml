@@ -78,3 +78,46 @@ jobs:
           name: dependency-inventory
           path: /tmp/debrio-sbom.json
           retention-days: 30
+  files:
+    name: Protected file checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm install --global npm@11.19.1
+      - run: npm ci --include=dev
+      - run: node scripts/setup-files-local.mjs
+      - name: Pull disposable stack images one at a time
+        env:
+          COMPOSE_PARALLEL_LIMIT: "1"
+        run: |
+          for attempt in 1 2 3; do
+            docker compose --env-file .env.files.local -f compose.yaml -f compose.files.yaml pull && exit 0
+            sleep $((attempt * 15))
+          done
+          exit 1
+      - run: npm run db:start
+      - run: docker compose --env-file .env.files.local -f compose.yaml -f compose.files.yaml up -d --wait storage file-gateway clamav
+      - run: node scripts/setup-file-buckets.mjs
+      - name: Load current scanner signatures
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if docker compose --env-file .env.files.local -f compose.yaml -f compose.files.yaml logs clamav | grep -q 'daily.cld updated'; then
+              docker compose --env-file .env.files.local -f compose.yaml -f compose.files.yaml restart clamav
+              break
+            fi
+            sleep 10
+          done
+          docker compose --env-file .env.files.local -f compose.yaml -f compose.files.yaml up -d --wait clamav
+      - run: npm run test:files
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: FILE_RESOURCE_BROWSER=1 npx playwright test tests/browser/file-resources.spec.ts
+      - if: always()
+        run: docker compose --env-file .env.files.local -f compose.yaml -f compose.files.yaml down --volumes
