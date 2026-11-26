@@ -108,17 +108,19 @@ test("synthetic protected file upload, scoped release, checked download and revo
   });
   await host.getByRole("button", { name: "Preview resource release" }).click();
   await host.getByRole("button", { name: "Confirm resource release" }).click();
+  const tray = x.guest.getByRole("region", { name: "Resources", exact: true });
+  await expect(tray).toContainText(title);
   expect(releasedRequest).not.toBeNull();
   const releaseOperation = (releasedRequest as unknown as { operation: string })
     .operation;
-  expect(
-    sql(
-      `select count(*) from public.resource_commands where operation_id='${releaseOperation}' and session_id='${x.session}';`
+  await expect
+    .poll(() =>
+      sql(
+        `select count(*) from public.resource_commands where operation_id='${releaseOperation}' and session_id='${x.session}';`
+      )
     )
-  ).toBe("1");
+    .toBe("1");
 
-  const tray = x.guest.getByRole("region", { name: "Resources", exact: true });
-  await expect(tray).toContainText(title);
   await tray.getByRole("button", { name: "View resource" }).click();
   const href = await tray
     .getByRole("link", { name: "Download protected file" })
@@ -211,7 +213,7 @@ test("synthetic protected file upload, scoped release, checked download and revo
   await x.context.close();
 });
 
-test("pending upload resumes after refresh without a second version or stale payload reuse", async ({
+test("crashed staged upload recovers after refresh without a local file or second version", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -298,12 +300,9 @@ test("pending upload resumes after refresh without a second version or stale pay
     .getByRole("heading", { name: "File resource", exact: true })
     .locator("..");
   await expect(editor.getByRole("status")).toHaveText("uploading");
-  await editor.getByLabel("Choose file").setInputFiles({
-    name: "recovery.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from(content),
-  });
-  await editor.getByRole("button", { name: "Upload and validate" }).click();
+  await editor
+    .getByRole("button", { name: "Check exact upload result" })
+    .click();
   await expect(editor.getByRole("status")).toHaveText("Ready to mark", {
     timeout: 40_000,
   });

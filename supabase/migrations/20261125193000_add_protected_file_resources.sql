@@ -173,6 +173,20 @@ declare i public.resource_file_intents; begin
  return false;
 end $$;
 
+-- After a crashed upload's lease expires, the original staged object can be
+-- inspected without requiring the browser to retain its local File handle.
+create function public.recover_file_upload(p_intent uuid) returns boolean language plpgsql security definer set search_path='' as $$
+declare i public.resource_file_intents; begin
+ if auth.role()<>'service_role' then raise exception 'not_allowed' using errcode='42501'; end if;
+ select * into i from public.resource_file_intents where id=p_intent for update;
+ if i.id is null or i.state<>'uploading' or i.upload_lock_until is null or i.upload_lock_until>clock_timestamp() or i.expires_at<=clock_timestamp() or i.auth_expires_at<=clock_timestamp() or
+ not (select enabled from public.file_resource_capability where singleton) or not (select enabled from public.resource_capability where singleton) or
+ not exists(select 1 from public.workspaces w join auth.sessions s on s.user_id=w.owner_id where w.id=i.workspace_id and w.owner_id=i.actor_id and s.id=i.auth_session and s.aal='aal2' and (s.not_after is null or s.not_after>clock_timestamp()))
+ then return false; end if;
+ update public.resource_file_intents set state='pending',upload_lock_until=null where id=i.id;
+ return true;
+end $$;
+
 -- A clean staged-byte verdict is durable, but cannot itself release a file.
 -- The host must separately mark the validated version Ready.
 create function public.validate_file_resource(p_intent uuid,p_sha256 text,p_scanner text,p_signatures_at timestamptz) returns jsonb language plpgsql security definer set search_path='' as $$
@@ -408,8 +422,8 @@ do $$ declare definition text; marker text; begin
 end $$;
 
 do $$ declare f record; begin
- for f in select p.oid::regprocedure signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('begin_file_resource','read_file_resource','read_file_resource_for_resource','reserve_file_upload','finish_file_upload','validate_file_resource','reserve_file_promotion','finish_file_resource','set_file_resource_state','quarantine_file_digest','delete_file_resource','delete_file_resource_version','purge_file_resource','record_file_cleanup_failure','expire_file_resource','file_version_in_session','file_operation_replay_candidate','due_file_versions_for_host','verify_file_version','freeze_file_version_identity') loop
+ for f in select p.oid::regprocedure signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('begin_file_resource','read_file_resource','read_file_resource_for_resource','reserve_file_upload','finish_file_upload','recover_file_upload','validate_file_resource','reserve_file_promotion','finish_file_resource','set_file_resource_state','quarantine_file_digest','delete_file_resource','delete_file_resource_version','purge_file_resource','record_file_cleanup_failure','expire_file_resource','file_version_in_session','file_operation_replay_candidate','due_file_versions_for_host','verify_file_version','freeze_file_version_identity') loop
  execute format('revoke all on function %s from public,anon,authenticated,service_role',f.signature); end loop;
 end $$;
 grant execute on function public.begin_file_resource(uuid,uuid,uuid,integer,text,text,text,integer,text),public.read_file_resource(uuid,uuid),public.read_file_resource_for_resource(uuid,uuid),public.delete_file_resource(uuid,uuid),public.delete_file_resource_version(uuid,uuid),public.file_version_in_session(uuid,uuid),public.file_operation_replay_candidate(uuid,uuid,boolean),public.due_file_versions_for_host(uuid) to authenticated;
-grant execute on function public.reserve_file_upload(uuid),public.finish_file_upload(uuid),public.validate_file_resource(uuid,text,text,timestamptz),public.reserve_file_promotion(uuid),public.finish_file_resource(uuid,text,text,timestamptz),public.set_file_resource_state(uuid,text,text),public.quarantine_file_digest(text),public.purge_file_resource(uuid),public.record_file_cleanup_failure(uuid,text),public.expire_file_resource(uuid),public.verify_file_version(uuid,text) to service_role;
+grant execute on function public.reserve_file_upload(uuid),public.finish_file_upload(uuid),public.recover_file_upload(uuid),public.validate_file_resource(uuid,text,text,timestamptz),public.reserve_file_promotion(uuid),public.finish_file_resource(uuid,text,text,timestamptz),public.set_file_resource_state(uuid,text,text),public.quarantine_file_digest(text),public.purge_file_resource(uuid),public.record_file_cleanup_failure(uuid,text),public.expire_file_resource(uuid),public.verify_file_version(uuid,text) to service_role;

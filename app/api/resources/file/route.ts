@@ -171,6 +171,14 @@ export async function POST(request: Request) {
         .eq("workspace_id", x.workspace)
         .single();
       const intent = query.data as Intent | null;
+      if (intent?.state === "uploading") {
+        const recovered = await service.rpc("recover_file_upload", {
+          p_intent: intent.id,
+        });
+        if (recovered.error || !recovered.data)
+          return safe("resource_unavailable", 503, true);
+        intent.state = "pending";
+      }
       if (
         query.error ||
         !intent ||
@@ -567,6 +575,22 @@ export async function PUT(request: Request) {
   });
   if (completed.error) return safe("resource_unavailable", 503, true);
   if (!completed.data) {
+    // An expired lease may already have been recovered and validated while
+    // this older PUT was stalled. Never delete bytes for an active intent.
+    const current = await service
+      .from("resource_file_intents")
+      .select("state")
+      .eq("id", intentId)
+      .eq("workspace_id", workspace)
+      .single();
+    if (
+      current.error ||
+      !current.data ||
+      ["pending", "validated", "promoting", "ready", "unavailable"].includes(
+        current.data.state
+      )
+    )
+      return safe("resource_unavailable", 503, true);
     const removed = await storage.storage
       .from(FILE_BUCKET_STAGING)
       .remove([intent.staging_key]);

@@ -3,6 +3,7 @@ import { connect } from "node:net";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 export const FILE_MAX_BYTES = 10 * 1024 * 1024;
+export const FILE_MAX_PDF_PAGES = 2000;
 export const FILE_BUCKET_STAGING = "debrio-file-quarantine";
 export const FILE_BUCKET_READY = "debrio-file-ready";
 
@@ -66,6 +67,7 @@ export async function validateFileBytes(
     )
       throw new FileValidationError("invalid_file");
     let task: ReturnType<typeof getDocument> | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       task = getDocument({
         data: Uint8Array.from(source),
@@ -73,31 +75,40 @@ export async function validateFileBytes(
         stopAtErrors: true,
         useSystemFonts: false,
       });
-      const pdf = await task.promise;
-      if (!pdf.numPages) throw Error("page_count");
-      if (
-        (await pdf.getJSActions()) ||
-        (await pdf.getAttachments()) ||
-        (await pdf.getFieldObjects())
-      )
-        throw Error("active_pdf");
-      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-        const page = await pdf.getPage(pageNumber);
-        if (await page.getJSActions()) throw Error("active_pdf");
-        for (const annotation of await page.getAnnotations()) {
+      await Promise.race([
+        (async () => {
+          const pdf = await task!.promise;
+          if (!pdf.numPages || pdf.numPages > FILE_MAX_PDF_PAGES)
+            throw Error("page_count");
           if (
-            annotation.jsAction ||
-            annotation.action === "Launch" ||
-            annotation.attachment ||
-            /^javascript:/iu.test(annotation.unsafeUrl ?? "")
+            (await pdf.getJSActions()) ||
+            (await pdf.getAttachments()) ||
+            (await pdf.getFieldObjects())
           )
             throw Error("active_pdf");
-        }
-      }
+          for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+            const page = await pdf.getPage(pageNumber);
+            if (await page.getJSActions()) throw Error("active_pdf");
+            for (const annotation of await page.getAnnotations()) {
+              if (
+                annotation.jsAction ||
+                annotation.action === "Launch" ||
+                annotation.attachment ||
+                /^javascript:/iu.test(annotation.unsafeUrl ?? "")
+              )
+                throw Error("active_pdf");
+            }
+          }
+        })(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(Error("pdf_timeout")), 30000);
+        }),
+      ]);
     } catch {
       throw new FileValidationError("invalid_file");
     } finally {
-      await task?.destroy();
+      clearTimeout(timeout);
+      void task?.destroy().catch(() => undefined);
     }
   }
   return { sha256: fileSha256(bytes), size: bytes.byteLength, mime, name };

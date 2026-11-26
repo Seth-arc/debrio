@@ -70,6 +70,41 @@ test("a minimal well-formed passive PDF is accepted", async () => {
   ).resolves.toMatchObject({ mime: "application/pdf" });
 });
 
+test("PDF inspection accepts the page work boundary and refuses the next page", async () => {
+  const manyPagePdf = (count: number) => {
+    let pdf = "%PDF-1.4\n";
+    const offsets = [0];
+    const pages = Array.from({ length: count }, (_, index) => index + 3);
+    const objects = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      `<< /Type /Pages /Kids [${pages.map((id) => `${id} 0 R`).join(" ")}] /Count ${count} >>`,
+      ...pages.map(
+        () =>
+          `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents ${count + 3} 0 R >>`
+      ),
+      "<< /Length 0 >>\nstream\n\nendstream",
+    ];
+    for (const [index, object] of objects.entries()) {
+      offsets.push(Buffer.byteLength(pdf));
+      pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    }
+    const xref = Buffer.byteLength(pdf);
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
+      .slice(1)
+      .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+      .join(
+        ""
+      )}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    return bytes(pdf);
+  };
+  await expect(
+    validateFileBytes(manyPagePdf(2000), "2000.pdf", "application/pdf")
+  ).resolves.toMatchObject({ mime: "application/pdf" });
+  await expect(
+    validateFileBytes(manyPagePdf(2001), "2001.pdf", "application/pdf")
+  ).rejects.toMatchObject({ code: "invalid_file" });
+}, 45000);
+
 test("scanner fails closed without a configured reachable engine", async () => {
   await expect(
     scanFileBytes(bytes("synthetic"), undefined)

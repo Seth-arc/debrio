@@ -110,6 +110,17 @@ export function FileResourceEditor({
   };
 
   const validate = async (current: FileIntent) => {
+    if (
+      current.state === "uploading" &&
+      current.upload_lock_until &&
+      Date.parse(current.upload_lock_until) > Date.now()
+    ) {
+      setStatus("Uploading");
+      setError(
+        "The previous upload is still finishing. Check this exact result after its short lease expires."
+      );
+      return;
+    }
     setBusy(true);
     setStatus("Validating / Scan pending");
     try {
@@ -249,7 +260,9 @@ export function FileResourceEditor({
         file.size > 10485760
       ) {
         setStatus("Unsaved");
-        setError("Choose a PDF or TXT file of 1 byte to 10 MiB and a title.");
+        setError(
+          "Choose a PDF (up to 2,000 pages) or TXT file of 1 byte to 10 MiB and a title."
+        );
         return;
       }
       const sha256 = [
@@ -350,7 +363,8 @@ export function FileResourceEditor({
       <p role="status">{verified ? status : "Unavailable"}</p>
       {error && verified && <p role="alert">{error}</p>}
       <p>
-        PDF or UTF-8 TXT, 1 byte to 10 MiB. Files are scanned before release.
+        PDF (up to 2,000 pages) or UTF-8 TXT, 1 byte to 10 MiB. Files are
+        scanned before release.
       </p>
       <label htmlFor="file-resource-title">Resource title</label>
       <input
@@ -393,11 +407,12 @@ export function FileResourceEditor({
         >
           {retryRequest ? "Retry exact upload" : "Upload and validate"}
         </button>
-        {intent && ["pending", "unavailable"].includes(intent.state) && (
-          <button disabled={locked} onClick={() => void validate(intent)}>
-            Check exact upload result
-          </button>
-        )}
+        {intent &&
+          ["pending", "uploading", "unavailable"].includes(intent.state) && (
+            <button disabled={locked} onClick={() => void validate(intent)}>
+              Check exact upload result
+            </button>
+          )}
         {intent?.state === "validated" && (
           <button disabled={locked} onClick={() => void finalize(intent)}>
             Mark ready
