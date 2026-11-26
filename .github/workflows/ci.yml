@@ -114,6 +114,7 @@ jobs:
             fi
             sleep 10
           done
+          docker compose --env-file .env.files.local -f compose.yaml -f compose.files.yaml up -d --wait clamav
       - run: npm run test:files
       - run: npm run build
       - run: npx playwright install --with-deps chromium

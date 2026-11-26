@@ -22,6 +22,7 @@ const { data, error } = await service
     "deleted",
     "pending",
     "uploading",
+    "validated",
     "promoting",
     "unavailable",
     "rejected",

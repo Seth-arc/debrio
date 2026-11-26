@@ -28,8 +28,9 @@ create table public.resource_file_intents(
  byte_size integer not null check(byte_size between 1 and 10485760),
  sha256 text not null check(sha256 ~ '^[0-9a-f]{64}$'),
  staging_key text not null unique, ready_key text not null unique,
- state text not null default 'pending' check(state in ('pending','uploading','promoting','ready','rejected','unavailable','deleted')),
+ state text not null default 'pending' check(state in ('pending','uploading','validated','promoting','ready','rejected','unavailable','deleted')),
  error_code text, version_id uuid unique,
+ validated_scanner text, validated_signatures_at timestamptz, validated_at timestamptz,
  created_at timestamptz not null default clock_timestamp(),
  expires_at timestamptz not null default (clock_timestamp()+interval '15 minutes'),
  purged_at timestamptz,
@@ -109,7 +110,7 @@ declare r public.resources; i public.resource_file_intents; d text; next_revisio
  perform pg_advisory_xact_lock(hashtextextended('resource-'||p_resource::text,0));
  select * into r from public.resources where id=p_resource for update;
  if r.id is not null and (r.workspace_id<>p_workspace or r.kind<>'file') then raise exception 'not_allowed' using errcode='42501'; end if;
- if coalesce(r.revision,0)<>p_revision or exists(select 1 from public.resource_file_intents where resource_id=p_resource and state in ('pending','uploading','promoting','unavailable') and purged_at is null) then raise exception 'resource_conflict'; end if;
+ if coalesce(r.revision,0)<>p_revision or exists(select 1 from public.resource_file_intents where resource_id=p_resource and state in ('pending','uploading','validated','promoting','unavailable') and purged_at is null) then raise exception 'resource_conflict'; end if;
  next_revision:=p_revision+1;
  if r.id is null then insert into public.resources(id,workspace_id,created_by,revision,title,kind,content) values(p_resource,p_workspace,auth.uid(),next_revision,p_title,'file','');
  else update public.resources set revision=next_revision,title=p_title where id=p_resource; end if;
@@ -172,6 +173,22 @@ declare i public.resource_file_intents; begin
  return false;
 end $$;
 
+-- A clean staged-byte verdict is durable, but cannot itself release a file.
+-- The host must separately mark the validated version Ready.
+create function public.validate_file_resource(p_intent uuid,p_sha256 text,p_scanner text,p_signatures_at timestamptz) returns jsonb language plpgsql security definer set search_path='' as $$
+declare i public.resource_file_intents; now_at timestamptz:=clock_timestamp(); begin
+ if auth.role()<>'service_role' then raise exception 'not_allowed' using errcode='42501'; end if;
+ select * into i from public.resource_file_intents where id=p_intent for update;
+ if i.id is null or i.state not in ('pending','unavailable','validated') or i.version_id is not null or i.expires_at<=now_at or i.auth_expires_at<=now_at or
+ p_sha256 is distinct from i.sha256 or p_scanner is null or length(p_scanner)>120 or p_signatures_at is null or p_signatures_at>now_at or p_signatures_at<now_at-interval '24 hours' or
+ exists(select 1 from public.file_blocked_digests where sha256=i.sha256) or
+ not (select enabled from public.file_resource_capability where singleton) or not (select enabled from public.resource_capability where singleton) or
+ not exists(select 1 from public.workspaces w join auth.sessions s on s.user_id=w.owner_id where w.id=i.workspace_id and w.owner_id=i.actor_id and s.id=i.auth_session and s.aal='aal2' and (s.not_after is null or s.not_after>now_at))
+ then raise exception 'resource_unavailable'; end if;
+ update public.resource_file_intents set state='validated',error_code=null,validated_scanner=p_scanner,validated_signatures_at=p_signatures_at,validated_at=now_at where id=i.id;
+ return jsonb_build_object('intent',i.id,'resource',i.resource_id,'revision',i.revision,'state','validated','filename',i.filename,'size',i.byte_size);
+end $$;
+
 -- Reserve the temporary second copy before promotion. The reservation remains
 -- durable across a crash until staging is actually removed and Ready commits.
 create function public.reserve_file_promotion(p_intent uuid) returns void language plpgsql security definer set search_path='' as $$
@@ -187,7 +204,7 @@ declare i public.resource_file_intents; used_bytes bigint; begin
  not (select enabled from public.file_resource_capability where singleton) or not (select enabled from public.resource_capability where singleton) then raise exception 'resource_unavailable'; end if;
  if i.expires_at<=clock_timestamp() or i.purged_at is not null then raise exception 'resource_unavailable'; end if;
  if i.state='promoting' then return; end if;
- if i.state not in ('pending','unavailable') or i.version_id is not null or i.expires_at<=clock_timestamp() then raise exception 'resource_unavailable'; end if;
+ if i.state<>'validated' or i.version_id is not null or i.expires_at<=clock_timestamp() or i.validated_signatures_at is null or i.validated_signatures_at<clock_timestamp()-interval '24 hours' then raise exception 'resource_unavailable'; end if;
  select coalesce(sum(byte_size * case when state='promoting' and staging_purged_at is null then 2 else 1 end),0) into used_bytes from public.resource_file_intents where workspace_id=i.workspace_id and purged_at is null;
  if used_bytes+i.byte_size>104857600 then raise exception 'resource_prerequisite'; end if;
  update public.resource_file_intents set state='promoting',error_code=null where id=i.id;
@@ -292,7 +309,7 @@ declare i public.resource_file_intents; begin
  select * into i from public.resource_file_intents where id=p_intent for update;
  if i.id is null then raise exception 'not_allowed' using errcode='42501'; end if;
  if i.state='deleted' then return true; end if;
- if i.state in ('pending','uploading','promoting','unavailable','rejected') and i.version_id is null and i.expires_at<=clock_timestamp() and (i.upload_lock_until is null or i.upload_lock_until<=clock_timestamp()) then
+ if i.state in ('pending','uploading','validated','promoting','unavailable','rejected') and i.version_id is null and i.expires_at<=clock_timestamp() and (i.upload_lock_until is null or i.upload_lock_until<=clock_timestamp()) then
   update public.resource_file_intents set state='deleted',error_code='expired' where id=i.id;
   return true;
  end if;
@@ -391,8 +408,8 @@ do $$ declare definition text; marker text; begin
 end $$;
 
 do $$ declare f record; begin
- for f in select p.oid::regprocedure signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('begin_file_resource','read_file_resource','read_file_resource_for_resource','reserve_file_upload','finish_file_upload','reserve_file_promotion','finish_file_resource','set_file_resource_state','quarantine_file_digest','delete_file_resource','delete_file_resource_version','purge_file_resource','record_file_cleanup_failure','expire_file_resource','file_version_in_session','file_operation_replay_candidate','due_file_versions_for_host','verify_file_version','freeze_file_version_identity') loop
+ for f in select p.oid::regprocedure signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('begin_file_resource','read_file_resource','read_file_resource_for_resource','reserve_file_upload','finish_file_upload','validate_file_resource','reserve_file_promotion','finish_file_resource','set_file_resource_state','quarantine_file_digest','delete_file_resource','delete_file_resource_version','purge_file_resource','record_file_cleanup_failure','expire_file_resource','file_version_in_session','file_operation_replay_candidate','due_file_versions_for_host','verify_file_version','freeze_file_version_identity') loop
  execute format('revoke all on function %s from public,anon,authenticated,service_role',f.signature); end loop;
 end $$;
 grant execute on function public.begin_file_resource(uuid,uuid,uuid,integer,text,text,text,integer,text),public.read_file_resource(uuid,uuid),public.read_file_resource_for_resource(uuid,uuid),public.delete_file_resource(uuid,uuid),public.delete_file_resource_version(uuid,uuid),public.file_version_in_session(uuid,uuid),public.file_operation_replay_candidate(uuid,uuid,boolean),public.due_file_versions_for_host(uuid) to authenticated;
-grant execute on function public.reserve_file_upload(uuid),public.finish_file_upload(uuid),public.reserve_file_promotion(uuid),public.finish_file_resource(uuid,text,text,timestamptz),public.set_file_resource_state(uuid,text,text),public.quarantine_file_digest(text),public.purge_file_resource(uuid),public.record_file_cleanup_failure(uuid,text),public.expire_file_resource(uuid),public.verify_file_version(uuid,text) to service_role;
+grant execute on function public.reserve_file_upload(uuid),public.finish_file_upload(uuid),public.validate_file_resource(uuid,text,text,timestamptz),public.reserve_file_promotion(uuid),public.finish_file_resource(uuid,text,text,timestamptz),public.set_file_resource_state(uuid,text,text),public.quarantine_file_digest(text),public.purge_file_resource(uuid),public.record_file_cleanup_failure(uuid,text),public.expire_file_resource(uuid),public.verify_file_version(uuid,text) to service_role;

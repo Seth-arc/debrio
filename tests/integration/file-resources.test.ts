@@ -38,6 +38,16 @@ async function readyFileFixture(payloadHash = hash) {
   expect(begun.error).toBeNull();
   expect(
     (
+      await service.rpc("validate_file_resource", {
+        p_intent: begun.data.intent,
+        p_sha256: payloadHash,
+        p_scanner: "ClamAV synthetic fixture",
+        p_signatures_at: new Date().toISOString(),
+      })
+    ).error
+  ).toBeNull();
+  expect(
+    (
       await service.rpc("reserve_file_promotion", {
         p_intent: begun.data.intent,
       })
@@ -250,6 +260,16 @@ test("stale signatures cannot commit Ready, and expired promotion cannot resume"
   });
   expect(begun.error).toBeNull();
   const intent = begun.data.intent as string;
+  expect(
+    (
+      await service.rpc("validate_file_resource", {
+        p_intent: intent,
+        p_sha256: hash,
+        p_scanner: "ClamAV synthetic fixture",
+        p_signatures_at: new Date().toISOString(),
+      })
+    ).error
+  ).toBeNull();
   expect(
     (await service.rpc("reserve_file_promotion", { p_intent: intent })).error
   ).toBeNull();

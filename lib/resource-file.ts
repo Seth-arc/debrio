@@ -59,7 +59,7 @@ export async function validateFileBytes(
     if (
       !raw.startsWith("%PDF-") ||
       !/%%EOF[\r\n \t]*$/u.test(raw) ||
-      /\/(?:JS|JavaScript|AA|OpenAction|Launch|EmbeddedFiles|AcroForm|XFA|RichMedia|Filespec|ObjStm)(?![A-Za-z])/iu.test(
+      /\/(?:JS|JavaScript|AA|OpenAction|Launch|EmbeddedFiles|AcroForm|XFA|RichMedia|Filespec)(?![A-Za-z])/iu.test(
         raw
       ) ||
       /\/(?:Encrypt|Collection)(?![A-Za-z])/iu.test(raw)
@@ -74,7 +74,7 @@ export async function validateFileBytes(
         useSystemFonts: false,
       });
       const pdf = await task.promise;
-      if (!pdf.numPages || pdf.numPages > 200) throw Error("page_count");
+      if (!pdf.numPages) throw Error("page_count");
       if (
         (await pdf.getJSActions()) ||
         (await pdf.getAttachments()) ||
@@ -83,7 +83,16 @@ export async function validateFileBytes(
         throw Error("active_pdf");
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
         const page = await pdf.getPage(pageNumber);
-        if ((await page.getAnnotations()).length) throw Error("annotation");
+        if (await page.getJSActions()) throw Error("active_pdf");
+        for (const annotation of await page.getAnnotations()) {
+          if (
+            annotation.jsAction ||
+            annotation.action === "Launch" ||
+            annotation.attachment ||
+            /^javascript:/iu.test(annotation.unsafeUrl ?? "")
+          )
+            throw Error("active_pdf");
+        }
       }
     } catch {
       throw new FileValidationError("invalid_file");

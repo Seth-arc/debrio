@@ -13,6 +13,7 @@ type FileIntent = {
   filename?: string;
   size?: number;
   version?: string | null;
+  upload_lock_until?: string | null;
 };
 type FileReply = {
   intent?: FileIntent | null;
@@ -78,7 +79,11 @@ export function FileResourceEditor({
       .then((reply) => {
         if (alive && reply.intent) {
           setIntent(reply.intent);
-          setStatus(reply.intent.state);
+          setStatus(
+            reply.intent.state === "validated"
+              ? "Ready to mark"
+              : reply.intent.state
+          );
         }
       })
       .catch(() => {
@@ -104,39 +109,79 @@ export function FileResourceEditor({
     }
   };
 
-  const finalize = async (current: FileIntent) => {
+  const validate = async (current: FileIntent) => {
+    setBusy(true);
     setStatus("Validating / Scan pending");
-    const result = await fileRequest({
-      workspace,
-      command: "finalize",
-      intent: current.intent,
-    });
-    if (result.receipt?.committed) {
-      setStatus("Ready");
-      setIntent({
-        ...current,
-        state: "ready",
-        version: result.receipt.version,
+    try {
+      const result = await fileRequest({
+        workspace,
+        command: "validate",
+        intent: current.intent,
       });
-      setFile(null);
-      setRetryRequest(null);
-      setUnknown(false);
-      setError("");
-      await refresh();
-    } else {
-      setStatus(
-        result.error === "invalid_file" || result.error === "malware_detected"
-          ? "Rejected"
-          : "Unavailable"
-      );
-      setError(
-        result.error === "malware_detected"
-          ? "The scanner rejected this file. Delete it and choose another."
-          : result.error === "invalid_file"
-            ? "The stored file failed validation. Delete it and choose another."
-            : "The file could not be verified. Retry validation when service returns."
-      );
-      setUnknown(!!result.uncertain);
+      if (result.intent?.state === "validated") {
+        setStatus("Ready to mark");
+        setIntent(result.intent);
+        setFile(null);
+        setUnknown(false);
+        setError("");
+      } else {
+        setStatus(
+          result.error === "invalid_file" || result.error === "malware_detected"
+            ? "Rejected"
+            : "Unavailable"
+        );
+        setError(
+          result.error === "malware_detected"
+            ? "The scanner rejected this file. Delete it and choose another."
+            : result.error === "invalid_file"
+              ? "The stored file failed validation. Delete it and choose another."
+              : "The file could not be verified. Retry validation when service returns."
+        );
+        setUnknown(!!result.uncertain);
+      }
+    } catch {
+      setStatus("Result unknown");
+      setUnknown(true);
+      setError("Validation result unknown. Check this exact upload result.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const finalize = async (current: FileIntent) => {
+    setBusy(true);
+    setStatus("Marking ready");
+    try {
+      const result = await fileRequest({
+        workspace,
+        command: "finalize",
+        intent: current.intent,
+      });
+      if (result.receipt?.committed) {
+        setStatus("Ready");
+        setIntent({
+          ...current,
+          state: "ready",
+          version: result.receipt.version,
+        });
+        setFile(null);
+        setRetryRequest(null);
+        setUnknown(false);
+        setError("");
+        await refresh();
+      } else {
+        setStatus("Unavailable");
+        setError(
+          "The file could not be marked ready. Check this exact result after reconnecting."
+        );
+        setUnknown(!!result.uncertain);
+      }
+    } catch {
+      setStatus("Result unknown");
+      setUnknown(true);
+      setError("Readiness result unknown. Check this exact upload result.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -163,7 +208,7 @@ export function FileResourceEditor({
       );
       return;
     }
-    await finalize(current);
+    await validate(current);
   };
 
   const begin = async () => {
@@ -174,8 +219,23 @@ export function FileResourceEditor({
     let begunIntent: FileIntent | null = null;
     let attempted: BeginRequest | null = null;
     try {
-      if (intent?.state === "pending") {
+      if (intent?.state === "pending" || intent?.state === "uploading") {
+        if (
+          intent.state === "uploading" &&
+          intent.upload_lock_until &&
+          Date.parse(intent.upload_lock_until) > Date.now()
+        ) {
+          setStatus("Uploading");
+          setError(
+            "The previous upload is still finishing. Retry this exact file after its short lease expires."
+          );
+          return;
+        }
         await uploadExact(intent, file);
+        return;
+      }
+      if (intent?.state === "validated") {
+        setStatus("Ready to mark");
         return;
       }
       const mime = file.name.endsWith(".pdf")
@@ -325,20 +385,29 @@ export function FileResourceEditor({
       <div className="actions">
         <button
           disabled={
-            locked || !file || (!!intent && intent.state === "promoting")
+            locked ||
+            !file ||
+            (!!intent && ["promoting", "validated"].includes(intent.state))
           }
           onClick={() => void begin()}
         >
           {retryRequest ? "Retry exact upload" : "Upload and validate"}
         </button>
-        {intent &&
-          ["pending", "promoting", "unavailable", "ready"].includes(
-            intent.state
-          ) && (
-            <button disabled={locked} onClick={() => void finalize(intent)}>
-              Check exact upload result
-            </button>
-          )}
+        {intent && ["pending", "unavailable"].includes(intent.state) && (
+          <button disabled={locked} onClick={() => void validate(intent)}>
+            Check exact upload result
+          </button>
+        )}
+        {intent?.state === "validated" && (
+          <button disabled={locked} onClick={() => void finalize(intent)}>
+            Mark ready
+          </button>
+        )}
+        {intent && ["promoting", "ready"].includes(intent.state) && (
+          <button disabled={locked} onClick={() => void finalize(intent)}>
+            Check exact upload result
+          </button>
+        )}
         {intent && intent.state !== "deleted" && (
           <button disabled={locked} onClick={() => void remove()}>
             Delete this file version

@@ -32,7 +32,19 @@ test("synthetic protected file upload, scoped release, checked download and revo
       .getByRole("heading", { name: "File resource", exact: true })
       .locator("..")
       .getByRole("status")
-  ).toHaveText("Ready", { timeout: 40_000 });
+  ).toHaveText("Ready to mark", { timeout: 40_000 });
+  await page.reload();
+  await page.getByRole("button", { name: title }).click();
+  await expect(
+    page
+      .getByRole("heading", { name: "File resource", exact: true })
+      .locator("..")
+      .getByRole("status")
+  ).toHaveText("Ready to mark");
+  await page.getByRole("button", { name: "Mark ready" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Ready" })
+  ).toBeVisible();
   await expectAccessible(page);
   const readyEditor = page
     .getByRole("heading", { name: "File resource", exact: true })
@@ -45,6 +57,10 @@ test("synthetic protected file upload, scoped release, checked download and revo
   await readyEditor
     .getByRole("button", { name: "Upload and validate" })
     .click();
+  await expect(readyEditor.getByRole("status")).toHaveText("Ready to mark", {
+    timeout: 40_000,
+  });
+  await readyEditor.getByRole("button", { name: "Mark ready" }).click();
   await expect(readyEditor.getByRole("status")).toHaveText("Ready", {
     timeout: 40_000,
   });
@@ -269,6 +285,11 @@ test("pending upload resumes after refresh without a second version or stale pay
     { path: uploadPath, text: content }
   );
   expect(ignoredAcknowledgement).toBe(200);
+  // Simulate a worker crash after reserving a retry: the staged bytes remain
+  // and the lease has expired, so reconnect must resume this same intent.
+  sql(
+    `update public.resource_file_intents set state='uploading', upload_lock_until=clock_timestamp()-interval '1 second' where id='${begun.intent.intent}';`
+  );
   await page.reload();
   await page
     .getByRole("button", { name: "Synthetic recoverable upload" })
@@ -276,13 +297,17 @@ test("pending upload resumes after refresh without a second version or stale pay
   const editor = page
     .getByRole("heading", { name: "File resource", exact: true })
     .locator("..");
-  await expect(editor.getByRole("status")).toHaveText("pending");
+  await expect(editor.getByRole("status")).toHaveText("uploading");
   await editor.getByLabel("Choose file").setInputFiles({
     name: "recovery.txt",
     mimeType: "text/plain",
     buffer: Buffer.from(content),
   });
   await editor.getByRole("button", { name: "Upload and validate" }).click();
+  await expect(editor.getByRole("status")).toHaveText("Ready to mark", {
+    timeout: 40_000,
+  });
+  await editor.getByRole("button", { name: "Mark ready" }).click();
   await expect(editor.getByRole("status")).toHaveText("Ready", {
     timeout: 40_000,
   });

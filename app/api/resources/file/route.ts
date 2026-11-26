@@ -151,6 +151,71 @@ export async function POST(request: Request) {
         return safe("resource_unavailable", 503);
       return reply({ intent: data });
     }
+    if (x.command === "validate") {
+      if (
+        Object.keys(x).some(
+          (k) => !["workspace", "command", "intent"].includes(k)
+        ) ||
+        !isUuid(x.intent)
+      )
+        return safe("invalid_file");
+      const authorized = await host.supabase.rpc("read_file_resource", {
+        p_workspace: x.workspace,
+        p_intent: x.intent,
+      });
+      if (authorized.error || !authorized.data) return safe("not_allowed", 403);
+      const query = await service
+        .from("resource_file_intents")
+        .select("*")
+        .eq("id", x.intent)
+        .eq("workspace_id", x.workspace)
+        .single();
+      const intent = query.data as Intent | null;
+      if (
+        query.error ||
+        !intent ||
+        !["pending", "unavailable", "validated"].includes(intent.state)
+      )
+        return safe("resource_unavailable", 503);
+      const staged = await storage.storage
+        .from(FILE_BUCKET_STAGING)
+        .download(intent.staging_key);
+      if (staged.error || !staged.data)
+        return safe("resource_unavailable", 503, true);
+      try {
+        const bytes = new Uint8Array(await staged.data.arrayBuffer());
+        const validated = await validateFileBytes(
+          bytes,
+          intent.filename,
+          intent.mime
+        );
+        if (
+          validated.sha256 !== intent.sha256 ||
+          validated.size !== intent.byte_size
+        )
+          throw new FileValidationError("invalid_file");
+        const scan = await scanFileBytes(bytes);
+        const recorded = await service.rpc("validate_file_resource", {
+          p_intent: intent.id,
+          p_sha256: validated.sha256,
+          p_scanner: scan.scanner,
+          p_signatures_at: scan.signaturesAt,
+        });
+        if (recorded.error) return safe("resource_unavailable", 503);
+        return reply({ intent: recorded.data });
+      } catch (error) {
+        const code =
+          error instanceof FileValidationError
+            ? error.code
+            : "scan_unavailable";
+        await service.rpc("set_file_resource_state", {
+          p_intent: intent.id,
+          p_state: code === "scan_unavailable" ? "unavailable" : "rejected",
+          p_error: code,
+        });
+        return safe(code, code === "scan_unavailable" ? 503 : 400);
+      }
+    }
     if (x.command === "finalize") {
       if (
         Object.keys(x).some(
@@ -181,7 +246,7 @@ export async function POST(request: Request) {
       if (
         query.error ||
         !intent ||
-        !["pending", "unavailable", "promoting"].includes(intent.state)
+        !["validated", "promoting"].includes(intent.state)
       )
         return safe("resource_unavailable", 503);
       const staged = await storage.storage
