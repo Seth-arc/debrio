@@ -321,12 +321,14 @@ export function ResourcePanel({
         host: true,
         request: { command: "preview", proposal: next },
       });
-      if (
-        ticket !== previewGeneration.current ||
-        document.hidden ||
-        !navigator.onLine
-      )
+      if (ticket !== previewGeneration.current) {
+        if (!document.hidden && navigator.onLine)
+          setProblem(
+            "Resource access changed or expired. Your selections remain here; preview again."
+          );
         return;
+      }
+      if (document.hidden || !navigator.onLine) return;
       const deadline = Math.min(
         inputReadDeadline(started, reply.preview?.ttl_ms ?? 0),
         snapshotUntil.current

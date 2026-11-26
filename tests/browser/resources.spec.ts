@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import {
   ownerWithWorkspace,
   expectAccessible,
@@ -479,6 +479,70 @@ test("resource authoring: conflict, exact retry, immutable versions and one navi
   await second.close();
   expect(errors).toEqual([]);
   expect(secondErrors).toEqual([]);
+});
+
+test("an expired host resource preview retains the proposal and requires a fresh preview", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  sql("update public.resource_capability set enabled=true;");
+  const x = await prepareWork(page, browser, { start: false, resources: true });
+  await createResource(page, "Synthetic expiry brief", "A private example.");
+  await page.goto(`/sessions/${x.session}`);
+  await scheduleResource(
+    page,
+    "Synthetic expiry brief",
+    "manual",
+    "Synthetic Ada"
+  );
+  const execution = page.getByRole("region", {
+    name: "Session activities",
+    exact: true,
+  });
+  await execution.getByRole("button", { name: "Preview start" }).click();
+  await execution.getByRole("button", { name: "Confirm start" }).click();
+  const panel = page.getByRole("region", {
+    name: "Session resources",
+    exact: true,
+  });
+  let heldFirstReleasePreview = false;
+  let delayReads = true;
+  await page.route("**/api/resources", async (route: Route) => {
+    const body = route.request().postDataJSON();
+    if (
+      !heldFirstReleasePreview &&
+      body.request?.command === "preview" &&
+      body.request.proposal?.command === "release"
+    ) {
+      heldFirstReleasePreview = true;
+      await new Promise((resolve) => setTimeout(resolve, 6500));
+    } else if (heldFirstReleasePreview && delayReads && !body.request) {
+      await new Promise((resolve) => setTimeout(resolve, 6500));
+    }
+    await route.continue();
+  });
+  await panel
+    .getByRole("button", { name: "Preview resource release", exact: true })
+    .and(page.locator(":enabled"))
+    .click();
+  await expect(
+    panel.getByText(
+      "Resource access changed or expired. Your selections remain here; preview again.",
+      { exact: true }
+    )
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(
+    panel.getByRole("group", { name: "Confirm resource allocation" })
+  ).not.toBeVisible();
+  delayReads = false;
+  await panel
+    .getByRole("button", { name: "Preview resource release", exact: true })
+    .and(page.locator(":enabled"))
+    .click();
+  await expect(
+    panel.getByRole("group", { name: "Confirm resource allocation" })
+  ).toContainText("Synthetic Ada");
 });
 
 test("resources: scheduled and manual delivery, scoped notices, revocation, held replies and reconnect preserve work", async ({
