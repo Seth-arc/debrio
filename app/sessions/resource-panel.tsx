@@ -313,6 +313,21 @@ export function ResourcePanel({
     setProblem("");
     setProposal(next);
     const ticket = ++previewGeneration.current;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      busy.current = false;
+      setPending(false);
+    };
+    const timeout = setTimeout(() => {
+      previewGeneration.current++;
+      setProblem(
+        "Resource preview timed out. Your selections remain here; preview again."
+      );
+      finish();
+    }, 5000);
     // eslint-disable-next-line react-hooks/purity -- Explicit preview event; lease starts before its asynchronous request.
     const started = performance.now();
     try {
@@ -321,6 +336,7 @@ export function ResourcePanel({
         host: true,
         request: { command: "preview", proposal: next },
       });
+      if (finished) return;
       if (ticket !== previewGeneration.current) {
         if (!document.hidden && navigator.onLine)
           setProblem(
@@ -348,8 +364,7 @@ export function ResourcePanel({
       if (ticket === previewGeneration.current)
         setProblem("Preview unavailable. Your selections remain here.");
     } finally {
-      busy.current = false;
-      setPending(false);
+      finish();
     }
   };
   const plan = (

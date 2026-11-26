@@ -507,7 +507,10 @@ test("an expired host resource preview retains the proposal and requires a fresh
     exact: true,
   });
   let heldFirstReleasePreview = false;
-  let delayReads = true;
+  let releaseFirstPreview!: () => void;
+  const firstPreviewHeld = new Promise<void>((resolve) => {
+    releaseFirstPreview = resolve;
+  });
   await page.route("**/api/resources", async (route: Route) => {
     const body = route.request().postDataJSON();
     if (
@@ -516,9 +519,7 @@ test("an expired host resource preview retains the proposal and requires a fresh
       body.request.proposal?.command === "release"
     ) {
       heldFirstReleasePreview = true;
-      await new Promise((resolve) => setTimeout(resolve, 6500));
-    } else if (heldFirstReleasePreview && delayReads && !body.request) {
-      await new Promise((resolve) => setTimeout(resolve, 6500));
+      await firstPreviewHeld;
     }
     await route.continue();
   });
@@ -528,18 +529,24 @@ test("an expired host resource preview retains the proposal and requires a fresh
     .click();
   await expect(
     panel.getByText(
-      "Resource access changed or expired. Your selections remain here; preview again.",
+      "Resource preview timed out. Your selections remain here; preview again.",
       { exact: true }
     )
-  ).toBeVisible({ timeout: 15_000 });
+  ).toBeVisible({ timeout: 10_000 });
   await expect(
     panel.getByRole("group", { name: "Confirm resource allocation" })
   ).not.toBeVisible();
-  delayReads = false;
-  await panel
-    .getByRole("button", { name: "Preview resource release", exact: true })
-    .and(page.locator(":enabled"))
-    .click();
+  try {
+    await panel
+      .getByRole("button", { name: "Preview resource release", exact: true })
+      .and(page.locator(":enabled"))
+      .click();
+    await expect(
+      panel.getByRole("group", { name: "Confirm resource allocation" })
+    ).toContainText("Synthetic Ada");
+  } finally {
+    releaseFirstPreview();
+  }
   await expect(
     panel.getByRole("group", { name: "Confirm resource allocation" })
   ).toContainText("Synthetic Ada");
