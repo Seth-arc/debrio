@@ -507,6 +507,7 @@ test("an expired host resource preview retains the proposal and requires a fresh
     exact: true,
   });
   let heldFirstReleasePreview = false;
+  let firstPreviewRequest: ReturnType<Route["request"]> | null = null;
   let releaseFirstPreview!: () => void;
   const firstPreviewHeld = new Promise<void>((resolve) => {
     releaseFirstPreview = resolve;
@@ -519,6 +520,7 @@ test("an expired host resource preview retains the proposal and requires a fresh
       body.request.proposal?.command === "release"
     ) {
       heldFirstReleasePreview = true;
+      firstPreviewRequest = route.request();
       await firstPreviewHeld;
     }
     await route.continue();
@@ -536,6 +538,7 @@ test("an expired host resource preview retains the proposal and requires a fresh
   await expect(
     panel.getByRole("group", { name: "Confirm resource allocation" })
   ).not.toBeVisible();
+  let firstReply!: ReturnType<Page["waitForResponse"]>;
   try {
     await panel
       .getByRole("button", { name: "Preview resource release", exact: true })
@@ -544,9 +547,13 @@ test("an expired host resource preview retains the proposal and requires a fresh
     await expect(
       panel.getByRole("group", { name: "Confirm resource allocation" })
     ).toContainText("Synthetic Ada");
+    firstReply = page.waitForResponse(
+      (response) => response.request() === firstPreviewRequest
+    );
   } finally {
     releaseFirstPreview();
   }
+  await firstReply;
   await expect(
     panel.getByRole("group", { name: "Confirm resource allocation" })
   ).toContainText("Synthetic Ada");
