@@ -20,6 +20,9 @@
     "test:guards": "node scripts/check-failure.mjs",
     "test:browser": "playwright test",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:files": "vitest run --config vitest.file.config.ts",
+    "files:reconcile:local": "node scripts/reconcile-files-local.mjs",
+    "files:watch:local": "node scripts/watch-files-local.mjs",
     "db:start": "docker compose up -d --wait && node scripts/db-migrate.mjs",
     "db:reset": "docker compose down --volumes && npm run db:start",
     "test:db": "docker compose run --rm tests",
@@ -40,6 +43,7 @@
     "livekit-client": "2.24.1",
     "livekit-server-sdk": "2.20.0",
     "next": "16.4.6",
+    "pdfjs-dist": "6.5.438",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },

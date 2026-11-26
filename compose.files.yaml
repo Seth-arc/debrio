@@ -1,0 +1,67 @@
+# Disposable file-resource proof only. Start with --env-file .env.files.local.
+services:
+  storage:
+    image: supabase/storage-api:v1.98.6@sha256:b09a1904222a7bcc750b00c375c24e7409e7e514474dbc1bd9183bc57cc95bde
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_healthy
+    environment:
+      ANON_KEY: ${SUPABASE_ANON_KEY}
+      SERVICE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      AUTH_JWT_SECRET: local-disposable-only-jwt-signing-secret-0001
+      DATABASE_URL: postgres://supabase_storage_admin:local-disposable-only@db:5432/postgres
+      STORAGE_PUBLIC_URL: http://127.0.0.1:39325
+      REQUEST_ALLOW_X_FORWARDED_PATH: "true"
+      FILE_SIZE_LIMIT: "10485760"
+      STORAGE_BACKEND: file
+      GLOBAL_S3_BUCKET: debrio-local-files
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: debrio-local
+      REGION: local
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+    volumes:
+      - file-storage:/var/lib/storage
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5000/status"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+  file-gateway:
+    image: nginx:1.29.2-alpine@sha256:61e01287e546aac28a3f56839c136b31f590273f3b41187a36f46f6a03bbfe22
+    depends_on:
+      storage:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:39325:8000"
+    volumes:
+      - ./supabase/local/file-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://127.0.0.1:8000/storage/v1/status",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+  clamav:
+    image: clamav/clamav:1.5.5-debian13-slim@sha256:85f35b3eee903dbd96c5ca250c5aa13d230d97987c0f876f7d46f001f9414239
+    ports:
+      - "127.0.0.1:39326:3310"
+    volumes:
+      - clamav-definitions:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 120s
+volumes:
+  file-storage:
+  clamav-definitions:

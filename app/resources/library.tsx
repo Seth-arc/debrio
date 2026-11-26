@@ -13,6 +13,7 @@ import { inputReadDeadline } from "../../lib/inputs";
 import { useNavigationGuard } from "../use-navigation-guard";
 import { requestResource } from "./client";
 import { LinkCheckDetails, ResourceVersionDetails } from "./details";
+import { FileResourceEditor } from "./file-editor";
 
 type EditorRequest =
   | ResourceLibraryCommand
@@ -274,9 +275,61 @@ export function ResourceLibraryPanel({ workspace }: { workspace: string }) {
           >
             New resource
           </button>
+          <button
+            disabled={!library?.enabled || !library.file_enabled || loading}
+            onClick={() => {
+              if (!leave()) return;
+              generation.current++;
+              setLibrary(null);
+              setEditorKey(++activeEditor.current);
+              setUnavailableSource(null);
+              setVersionOffset(0);
+              setSelected({
+                id: crypto.randomUUID(),
+                revision: 0,
+                title: "",
+                kind: "file",
+                content: "",
+                versions: [],
+                check: null,
+              });
+            }}
+          >
+            New protected file
+          </button>
         </div>
       </section>
-      {selected && (
+      {selected?.kind === "file" && (
+        <FileResourceEditor
+          key={`${selected.id}:${editorKey}`}
+          workspace={workspace}
+          initial={selected}
+          enabled={!!library?.enabled && !!library.file_enabled}
+          verified={
+            !!library &&
+            (!selected.revision || library.authority?.resource === selected.id)
+          }
+          onSaved={(resource) => {
+            if (activeEditor.current !== editorKey) return;
+            setSelected(resource);
+            setLibrary((previous) =>
+              previous
+                ? {
+                    ...previous,
+                    items: previous.items.some(
+                      (item) => item.id === resource.id
+                    )
+                      ? previous.items.map((item) =>
+                          item.id === resource.id ? resource : item
+                        )
+                      : [resource, ...previous.items],
+                  }
+                : previous
+            );
+          }}
+        />
+      )}
+      {selected && selected.kind !== "file" && (
         <ResourceEditor
           key={`${selected.id}:${editorKey}`}
           workspace={workspace}

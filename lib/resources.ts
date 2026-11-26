@@ -1,6 +1,12 @@
 import type { ReviewProjection } from "./reviews";
 
-export type ResourceKind = "text" | "link";
+export type ResourceKind = "text" | "link" | "file";
+export type ResourceFile = {
+  filename: string;
+  mime: "application/pdf" | "text/plain";
+  size: number;
+  status: "ready" | "unavailable" | "deleted";
+};
 export type ResourceSelector = {
   kind: "individual" | "group" | "shared";
   id: string | null;
@@ -22,6 +28,7 @@ export type ResourceVersion = {
   content: string;
   ready_at: string;
   check: ResourceCheck | null;
+  file?: ResourceFile | null;
 };
 export type ResourceDraft = {
   id: string;
@@ -36,6 +43,7 @@ export type ResourceDraft = {
 export type ResourceLibrary = {
   workspace: string;
   enabled: boolean;
+  file_enabled?: boolean;
   ttl_ms: number;
   items: { id: string; revision: number; title: string; kind: ResourceKind }[];
   next_offset: number | null;
@@ -127,6 +135,7 @@ export type ResourceItem = {
     received: boolean;
   };
   recipients?: ResourceRecipient[];
+  file?: ResourceFile | null;
 };
 export type ResourceNotice = {
   allocation: string;
@@ -148,6 +157,7 @@ export type ResourceSnapshot = {
         content: string;
         check: ResourceCheck | null;
         review?: ReviewProjection | null;
+        file?: ResourceFile | null;
       })
     | null;
   participants?: { id: string; name: string }[];

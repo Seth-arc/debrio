@@ -35,7 +35,7 @@ function request(body: unknown, extra: Record<string, string> = {}) {
   });
 }
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   rpc.mockResolvedValue({ data: { items: [] }, error: null });
   serviceRpc.mockResolvedValue({ data: { committed: true }, error: null });
   currentHost.mockResolvedValue({ state: "aal2", supabase: { rpc } });
@@ -120,7 +120,7 @@ test("AC1/11: MFA and current credentials required; known conflict differs from 
       content: "Synthetic",
     },
   };
-  rpc.mockResolvedValue({
+  rpc.mockResolvedValueOnce({
     error: { message: "resource_conflict", code: "P0001", details: "SECRET" },
   });
   expect(await (await POST(request(body))).json()).toEqual({
@@ -185,7 +185,8 @@ test("AC3: link resolution uses server-authorized saved URL and service-only rec
 });
 
 test("AC11: preview authority polling returns only the current token and lifetime, never body or recipient metadata", async () => {
-  rpc.mockResolvedValue({
+  rpc.mockResolvedValueOnce({ data: false, error: null });
+  rpc.mockResolvedValueOnce({
     data: {
       token: "a".repeat(64),
       ttl_ms: 1234,
@@ -201,7 +202,7 @@ test("AC11: preview authority polling returns only the current token and lifetim
       request: {
         command: "preview",
         metadataOnly: true,
-        proposal: { command: "schedule" },
+        proposal: { command: "schedule", version: id },
       },
     })
   );
@@ -210,7 +211,7 @@ test("AC11: preview authority polling returns only the current token and lifetim
   });
   expect(rpc).toHaveBeenCalledWith("resource_preview", {
     p_session: id,
-    p_request: { command: "schedule" },
+    p_request: { command: "schedule", version: id },
   });
 });
 
